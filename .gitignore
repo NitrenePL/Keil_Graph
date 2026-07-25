@@ -18,6 +18,9 @@ htmlcov/
 !.env.example
 *.log
 
+# Runtime waveform snapshots
+captures/
+
 # Downloaded Keil UVSOCK SDK/distribution
 apnt_198/
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import platform
+import struct
 import sys
 from pathlib import Path
 
@@ -32,6 +33,8 @@ UVSC_RUNMODE_NORMAL = 0
 UVSC_AUTO_PORT_MIN = 5101
 UVSC_AUTO_PORT_MAX = 5110
 UVSC_MAX_API_STR_SIZE = 1024
+# UVSOCK AMEM: 64-bit address, 32-bit byte/error fields, 64-bit error address.
+UVSC_AMEM_HEADER = struct.Struct("<QIIQ")
 
 UVSC_CALLBACK = ctypes.CFUNCTYPE(
     None,
@@ -145,6 +148,13 @@ class UvscClient:
         ]
         dll.UVSC_DBG_STATUS.restype = ctypes.c_int
 
+        dll.UVSC_DBG_MEM_READ.argtypes = [
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        dll.UVSC_DBG_MEM_READ.restype = ctypes.c_int
+
     def _on_callback(
         self,
         _custom_data: int | None,
@@ -233,6 +243,63 @@ class UvscClient:
         text = decode_uvsc_text(message.value).strip()
         fields = f"operation={operation.value}, uv_status={uv_status.value}"
         return f"{text} ({fields})" if text else fields
+
+    def read_memory(self, address: int, byte_count: int) -> bytes:
+        """Read target memory without changing the target execution state."""
+        if self._handle is None:
+            raise UvscError("尚未连接 uVision")
+        if not 0 <= address <= 0xFFFFFFFFFFFFFFFF:
+            raise UvscError(f"目标地址超出 64 位范围：0x{address:X}")
+        if byte_count <= 0:
+            raise UvscError(f"读取长度必须大于 0：{byte_count}")
+
+        total_size = UVSC_AMEM_HEADER.size + byte_count
+        buffer = ctypes.create_string_buffer(total_size)
+        UVSC_AMEM_HEADER.pack_into(
+            buffer,
+            0,
+            address,
+            byte_count,
+            0,
+            0,
+        )
+
+        result = self._dll.UVSC_DBG_MEM_READ(
+            self._handle,
+            buffer,
+            total_size,
+        )
+        if result != UVSC_SUCCESS:
+            detail = self.last_error()
+            suffix = f"；{detail}" if detail else ""
+            raise UvscError(
+                f"读取 0x{address:08X} 的 {byte_count} 字节失败："
+                f"{status_text(result)}{suffix}"
+            )
+
+        returned_address, returned_bytes, has_error, error_address = (
+            UVSC_AMEM_HEADER.unpack_from(buffer)
+        )
+        if has_error:
+            raise UvscError(
+                f"目标内存读取错误：起始地址 0x{returned_address:08X}，"
+                f"失败地址 0x{error_address:08X}，"
+                f"已读取 {returned_bytes} 字节"
+            )
+        if returned_address != address:
+            raise UvscError(
+                f"UVSC 返回地址不匹配：期望 0x{address:08X}，"
+                f"实际 0x{returned_address:08X}"
+            )
+        if returned_bytes != byte_count:
+            header_hex = bytes(buffer[:32]).hex(" ")
+            raise UvscError(
+                f"UVSC 返回长度不匹配：期望 {byte_count}，"
+                f"实际 {returned_bytes}；返回头={header_hex}"
+            )
+
+        start = UVSC_AMEM_HEADER.size
+        return bytes(buffer[start : start + returned_bytes])
 
     def close(self) -> list[str]:
         warnings: list[str] = []
