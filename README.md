@@ -42,6 +42,11 @@ http://127.0.0.1:35886
 可通过 `VIEWER_PORT` 或启动参数 `--port` 单独覆盖。构建后的前端由
 Python 服务直接提供，只需要启动一个进程。
 
+数据源、MAP 文件、Keil/DLL 路径、自动刷新开关和刷新间隔会自动
+保存到仓库根目录的 `.keil-array-viewer.json`，下次启动时自动恢复。
+该文件包含本机路径，已被 Git 忽略。可通过 `VIEWER_CONFIG_FILE`
+指定其他保存位置。
+
 ## 前端开发
 
 前端开发依赖安装在项目自己的 `frontend/node_modules` 中，Node
@@ -89,6 +94,7 @@ npm run dev
 ```powershell
 $env:UVSC_PORT = "35876"
 $env:VIEWER_PORT = "35886" # 可选；不设置时自动使用 UVSC_PORT + 10
+$env:VIEWER_CONFIG_FILE = "D:\path\to\viewer-config.json" # 可选
 $env:UVSC_ARRAY_ADDRESS = "0x200041E4"
 $env:UVSC_ARRAY_COUNT = "400"
 $env:UVSC_ARRAY_NAME = "myLOGGER0Arr"

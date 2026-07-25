@@ -16,6 +16,8 @@ htmlcov/
 .env
 .env.*
 !.env.example
+.keil-array-viewer.json
+.keil-array-viewer.json.tmp
 *.log
 
 # Runtime waveform snapshots

@@ -43,6 +43,8 @@ interface SourceOptions {
   data_types: string[];
   map_file: string;
   keil_path: string;
+  sources: SourceInput[];
+  settings_file: string;
   max_sources: number;
 }
 
@@ -63,7 +65,7 @@ interface SourceInput {
   array_name: string;
   count: number;
   dtype: string;
-  address: string | null;
+  address: string | number | null;
 }
 
 const COLORS = [
@@ -356,7 +358,9 @@ const loadInitialState = async (): Promise<void> => {
   sourceOptions = options;
   updateStatus(status);
   mapFileNote.textContent =
-    `留空的数组地址将从此 MAP 文件解析 · 最多 ${options.max_sources} 条曲线`;
+    `配置自动保存 · 留空的数组地址将从 MAP 解析 · `
+      + `最多 ${options.max_sources} 条曲线`;
+  mapFileNote.title = `配置文件：${options.settings_file}`;
   try {
     updateSnapshot(await requestJson<Snapshot>("/api/snapshot"));
   } catch {
@@ -454,7 +458,10 @@ const updateSourceNumbers = (): void => {
     rows.length >= (sourceOptions?.max_sources ?? COLORS.length);
 };
 
-const addSourceRow = (source?: SourceStatus): void => {
+const addSourceRow = (
+  source?: SourceStatus,
+  configured?: SourceInput,
+): void => {
   const fragment = sourceTemplate.content.cloneNode(true) as DocumentFragment;
   const row = fragment.querySelector<HTMLElement>(".source-row");
   if (!row) throw new Error("Missing source row template");
@@ -466,11 +473,20 @@ const addSourceRow = (source?: SourceStatus): void => {
     if (!element) throw new Error(`Missing source field ${name}`);
     return element;
   };
-  field<HTMLInputElement>("name").value = source?.array_name ?? "";
-  field<HTMLInputElement>("count").value = String(source?.count ?? 400);
-  field<HTMLSelectElement>("dtype").value = source?.dtype ?? "float32";
+  field<HTMLInputElement>("name").value =
+    configured?.array_name ?? source?.array_name ?? "";
+  field<HTMLInputElement>("count").value = String(
+    configured?.count ?? source?.count ?? 400,
+  );
+  field<HTMLSelectElement>("dtype").value =
+    configured?.dtype ?? source?.dtype ?? "float32";
   const address = field<HTMLInputElement>("address");
-  address.value = "";
+  address.value =
+    configured?.address === null || configured?.address === undefined
+      ? ""
+      : typeof configured.address === "number"
+        ? `0x${configured.address.toString(16).toUpperCase()}`
+        : configured.address;
   address.placeholder = source
     ? `自动解析；当前 ${source.address_hex}`
     : "留空按 MAP 解析";
@@ -482,9 +498,14 @@ const addSourceRow = (source?: SourceStatus): void => {
   updateSourceNumbers();
 };
 
-const renderSourceRows = (sources: SourceStatus[]): void => {
+const renderSourceRows = (
+  sources: SourceStatus[],
+  configuredSources: SourceInput[] = [],
+): void => {
   sourceList.replaceChildren();
-  sources.forEach((source) => addSourceRow(source));
+  sources.forEach((source, index) => {
+    addSourceRow(source, configuredSources[index]);
+  });
 };
 
 const collectSourceRows = (): SourceInput[] =>
@@ -516,7 +537,10 @@ sourceConfigButton.addEventListener("click", () => {
   mapFileInput.value = sourceOptions?.map_file ?? "";
   keilPathInput.value = sourceOptions?.keil_path ?? "";
   if (latestStatus) {
-    renderSourceRows(normalizedSources(latestStatus));
+    renderSourceRows(
+      normalizedSources(latestStatus),
+      sourceOptions?.sources ?? [],
+    );
   } else {
     renderSourceRows([]);
     addSourceRow();
@@ -536,18 +560,20 @@ sourceForm.addEventListener("submit", async (event) => {
   sourceSave.disabled = true;
   sourceError.textContent = "";
   try {
+    const submittedSources = collectSourceRows();
     const response = await requestJson<SourcesUpdateResponse>("/api/sources", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         map_file: mapFileInput.value.trim(),
         keil_path: keilPathInput.value.trim(),
-        sources: collectSourceRows(),
+        sources: submittedSources,
       }),
     });
     if (sourceOptions) {
       sourceOptions.map_file = response.map_file;
       sourceOptions.keil_path = response.keil_path;
+      sourceOptions.sources = submittedSources;
     }
     updateStatus(response.status);
     const snapshot = await requestJson<Snapshot>("/api/refresh", {
@@ -558,7 +584,7 @@ sourceForm.addEventListener("submit", async (event) => {
       (item) => item.resolved_from_map,
     ).length;
     setMessage(
-      `已配置 ${snapshot.series.length} 条曲线，`
+      `已保存 ${snapshot.series.length} 条曲线，`
         + `${mapCount} 条由 MAP 解析`,
     );
     closeSourceDialog();

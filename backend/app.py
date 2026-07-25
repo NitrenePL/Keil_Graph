@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -66,6 +67,18 @@ class SourcesUpdate(BaseModel):
     )
 
 
+class SavedSettings(BaseModel):
+    version: int = 1
+    auto_refresh: bool
+    interval_ms: int = Field(ge=MIN_INTERVAL_MS, le=MAX_INTERVAL_MS)
+    map_file: str = Field(min_length=1, max_length=4096)
+    keil_path: str = Field(min_length=1, max_length=4096)
+    sources: list[SourceUpdate] = Field(
+        min_length=1,
+        max_length=MAX_SOURCES,
+    )
+
+
 class WebSocketHub:
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
@@ -100,6 +113,17 @@ current_map_file = DEFAULT_MAP_FILE
 current_keil_path = Path(
     os.getenv("UVSC_KEIL_PATH", r"E:\Keil\Keil_v5")
 ).expanduser().resolve()
+SETTINGS_FILE = Path(
+    os.getenv("VIEWER_CONFIG_FILE", str(WORKSPACE / ".keil-array-viewer.json"))
+).expanduser().resolve()
+current_source_configs = [
+    SourceUpdate(
+        array_name=os.getenv("UVSC_ARRAY_NAME", "myLOGGER0Arr"),
+        count=env_int("UVSC_ARRAY_COUNT", 400),
+        dtype=os.getenv("UVSC_ARRAY_DTYPE", "float32"),
+        address=env_int("UVSC_ARRAY_ADDRESS", 0x200041E4),
+    )
+]
 service = UvscArrayService(
     workspace=WORKSPACE,
     port=env_int("UVSC_PORT", 35876),
@@ -116,6 +140,11 @@ service = UvscArrayService(
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     loop = asyncio.get_running_loop()
+
+    try:
+        restore_saved_settings()
+    except Exception as exc:
+        print(f"[WARN] 无法恢复上次配置，将使用默认配置：{exc}")
 
     def publish(event: dict[str, Any]) -> None:
         asyncio.run_coroutine_threadsafe(hub.broadcast(event), loop)
@@ -160,12 +189,19 @@ async def refresh_now() -> dict[str, Any]:
 @app.put("/api/config")
 async def update_config(config: ConfigUpdate) -> dict[str, Any]:
     try:
-        return service.configure(
+        status = service.configure(
             auto_refresh=config.auto_refresh,
             interval_ms=config.interval_ms,
         )
+        save_current_settings()
+        return status
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"保存配置失败：{exc}",
+        ) from exc
 
 
 def parse_address(value: int | str | None) -> int | None:
@@ -185,6 +221,10 @@ async def get_source_options() -> dict[str, Any]:
         "data_types": list(DATA_TYPES),
         "map_file": str(current_map_file),
         "keil_path": str(current_keil_path),
+        "sources": [
+            item.model_dump(mode="json") for item in current_source_configs
+        ],
+        "settings_file": str(SETTINGS_FILE),
         "max_sources": MAX_SOURCES,
     }
 
@@ -227,38 +267,91 @@ def resolve_source(
     return source, resolution
 
 
+def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
+    global current_keil_path, current_map_file, current_source_configs
+    map_file_text = (config.map_file or str(current_map_file)).strip()
+    if not map_file_text:
+        raise ValueError("MAP 文件路径不能为空")
+    map_file = Path(map_file_text).expanduser().resolve()
+    symbol_resolver = MapSymbolResolver(map_file)
+    symbol_resolver.validate()
+    keil_path_text = (config.keil_path or str(current_keil_path)).strip()
+    if not keil_path_text:
+        raise ValueError("Keil 安装目录不能为空")
+    keil_path = Path(keil_path_text).expanduser().resolve()
+    resolved = [
+        resolve_source(item, symbol_resolver) for item in config.sources
+    ]
+    runtime = service.configure_sources_and_dll(
+        (item[0] for item in resolved),
+        keil_path,
+    )
+    current_map_file = map_file
+    current_keil_path = keil_path
+    current_source_configs = list(config.sources)
+    return {
+        "status": runtime["status"],
+        "resolutions": [item[1] for item in resolved],
+        "map_file": str(current_map_file),
+        "keil_path": str(current_keil_path),
+        "dll_path": runtime["dll_path"],
+    }
+
+
+def current_saved_settings() -> SavedSettings:
+    status = service.get_status()
+    return SavedSettings(
+        auto_refresh=status["auto_refresh"],
+        interval_ms=status["interval_ms"],
+        map_file=str(current_map_file),
+        keil_path=str(current_keil_path),
+        sources=current_source_configs,
+    )
+
+
+def save_current_settings() -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SETTINGS_FILE.with_name(f"{SETTINGS_FILE.name}.tmp")
+    payload = current_saved_settings().model_dump(mode="json")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, SETTINGS_FILE)
+
+
+def restore_saved_settings() -> bool:
+    if not SETTINGS_FILE.is_file():
+        return False
+    payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    settings = SavedSettings.model_validate(payload)
+    apply_sources(
+        SourcesUpdate(
+            map_file=settings.map_file,
+            keil_path=settings.keil_path,
+            sources=settings.sources,
+        )
+    )
+    service.configure(
+        auto_refresh=settings.auto_refresh,
+        interval_ms=settings.interval_ms,
+    )
+    return True
+
+
 @app.put("/api/sources")
 async def update_sources(config: SourcesUpdate) -> dict[str, Any]:
-    global current_keil_path, current_map_file
     try:
-        map_file_text = (config.map_file or str(current_map_file)).strip()
-        if not map_file_text:
-            raise ValueError("MAP 文件路径不能为空")
-        map_file = Path(map_file_text).expanduser().resolve()
-        symbol_resolver = MapSymbolResolver(map_file)
-        symbol_resolver.validate()
-        keil_path_text = (config.keil_path or str(current_keil_path)).strip()
-        if not keil_path_text:
-            raise ValueError("Keil 安装目录不能为空")
-        keil_path = Path(keil_path_text).expanduser().resolve()
-        resolved = [
-            resolve_source(item, symbol_resolver) for item in config.sources
-        ]
-        runtime = service.configure_sources_and_dll(
-            (item[0] for item in resolved),
-            keil_path,
-        )
-        current_map_file = map_file
-        current_keil_path = keil_path
-        return {
-            "status": runtime["status"],
-            "resolutions": [item[1] for item in resolved],
-            "map_file": str(current_map_file),
-            "keil_path": str(current_keil_path),
-            "dll_path": runtime["dll_path"],
-        }
+        result = apply_sources(config)
+        save_current_settings()
+        return result
     except (ValueError, UvscError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"保存配置失败：{exc}",
+        ) from exc
 
 
 @app.put("/api/source")
