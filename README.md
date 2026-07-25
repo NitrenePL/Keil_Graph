@@ -34,10 +34,13 @@ npm 10.9.8；Volta 会根据 `frontend/package.json` 自动选择版本。
 浏览器访问：
 
 ```text
-http://127.0.0.1:35877
+http://127.0.0.1:35886
 ```
 
-构建后的前端由 Python 服务直接提供，只需要启动一个进程。
+网页服务端口默认为 Keil UVSOCK 端口加 10。例如
+`UVSC_PORT=35876` 时网页地址为 `http://127.0.0.1:35886`。
+可通过 `VIEWER_PORT` 或启动参数 `--port` 单独覆盖。构建后的前端由
+Python 服务直接提供，只需要启动一个进程。
 
 ## 前端开发
 
@@ -85,6 +88,7 @@ npm run dev
 
 ```powershell
 $env:UVSC_PORT = "35876"
+$env:VIEWER_PORT = "35886" # 可选；不设置时自动使用 UVSC_PORT + 10
 $env:UVSC_ARRAY_ADDRESS = "0x200041E4"
 $env:UVSC_ARRAY_COUNT = "400"
 $env:UVSC_ARRAY_NAME = "myLOGGER0Arr"
