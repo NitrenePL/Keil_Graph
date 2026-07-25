@@ -45,6 +45,8 @@ interface SourceOptions {
   keil_path: string;
   sources: SourceInput[];
   settings_file: string;
+  export_channel_index: number;
+  export_frequency_hz: number;
   max_sources: number;
 }
 
@@ -108,6 +110,15 @@ const sourceError = byId<HTMLParagraphElement>("source-error");
 const mapFileNote = byId<HTMLParagraphElement>("map-file-note");
 const mapFileInput = byId<HTMLInputElement>("map-file");
 const keilPathInput = byId<HTMLInputElement>("keil-path");
+const exportButton = byId<HTMLButtonElement>("export-button");
+const exportDialog = byId<HTMLDialogElement>("export-dialog");
+const exportForm = byId<HTMLFormElement>("export-form");
+const exportDialogClose = byId<HTMLButtonElement>("export-dialog-close");
+const exportCancel = byId<HTMLButtonElement>("export-cancel");
+const exportSubmit = byId<HTMLButtonElement>("export-submit");
+const exportChannel = byId<HTMLSelectElement>("export-channel");
+const exportFrequency = byId<HTMLInputElement>("export-frequency");
+const exportError = byId<HTMLParagraphElement>("export-error");
 
 let latestSnapshot: Snapshot | null = null;
 let latestStatus: ViewerStatus | null = null;
@@ -284,6 +295,20 @@ const setMessage = (message: string, error = false): void => {
   controlMessage.classList.toggle("error", error);
 };
 
+const updateExportAvailability = (): void => {
+  const canExport = Boolean(
+    latestStatus
+      && !latestStatus.auto_refresh
+      && latestSnapshot?.series.length,
+  );
+  exportButton.disabled = !canExport;
+  exportButton.title = latestStatus?.auto_refresh
+    ? "请先关闭自动刷新"
+    : latestSnapshot
+      ? "导出当前快照"
+      : "尚无可导出的快照";
+};
+
 const updateStatus = (status: ViewerStatus): void => {
   latestStatus = status;
   const sources = normalizedSources(status);
@@ -308,6 +333,7 @@ const updateStatus = (status: ViewerStatus): void => {
   byId("uvsock-port").textContent = String(status.port);
 
   if (seriesSignature(sources) !== plottedSignature) createPlot(sources);
+  updateExportAvailability();
 };
 
 const updateSnapshot = (snapshot: Snapshot): void => {
@@ -334,6 +360,7 @@ const updateSnapshot = (snapshot: Snapshot): void => {
     ...Array<number | null>(maxCount - source.values.length).fill(null),
   ]);
   plot?.setData([indices, ...alignedSeries]);
+  updateExportAvailability();
 };
 
 const requestJson = async <T>(
@@ -443,6 +470,94 @@ manualButton.addEventListener("click", async () => {
     setMessage((error as Error).message, true);
   } finally {
     manualButton.disabled = false;
+  }
+});
+
+const closeExportDialog = (): void => {
+  exportDialog.close();
+  exportError.textContent = "";
+};
+
+exportButton.addEventListener("click", () => {
+  if (!latestStatus || latestStatus.auto_refresh || !latestSnapshot) {
+    setMessage("请先关闭自动刷新，并确保已有快照", true);
+    return;
+  }
+
+  exportChannel.replaceChildren();
+  latestSnapshot.series.forEach((series, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent =
+      `${index + 1} · ${series.array_name} (${series.values.length} points)`;
+    exportChannel.appendChild(option);
+  });
+  const savedChannel = Math.min(
+    sourceOptions?.export_channel_index ?? 0,
+    latestSnapshot.series.length - 1,
+  );
+  exportChannel.value = String(savedChannel);
+  exportFrequency.value = String(
+    sourceOptions?.export_frequency_hz ?? 20_000,
+  );
+  exportError.textContent = "";
+  exportDialog.showModal();
+});
+
+exportDialogClose.addEventListener("click", closeExportDialog);
+exportCancel.addEventListener("click", closeExportDialog);
+exportDialog.addEventListener("click", (event) => {
+  if (event.target === exportDialog) closeExportDialog();
+});
+
+exportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  exportSubmit.disabled = true;
+  exportError.textContent = "";
+  const channelIndex = Number(exportChannel.value);
+  const frequencyHz = Number(exportFrequency.value);
+  try {
+    const response = await fetch("/api/export/csv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel_index: channelIndex,
+        frequency_hz: frequencyHz,
+      }),
+    });
+    if (!response.ok) {
+      const payload = await response.json();
+      const detail =
+        typeof payload.detail === "string"
+          ? payload.detail
+          : response.statusText;
+      throw new Error(detail);
+    }
+
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const filename =
+      disposition.match(/filename="([^"]+)"/)?.[1] ?? "waveform.csv";
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+
+    if (sourceOptions) {
+      sourceOptions.export_channel_index = channelIndex;
+      sourceOptions.export_frequency_hz = frequencyHz;
+    }
+    closeExportDialog();
+    setMessage(
+      `已导出通道 ${channelIndex + 1}，采样频率 ${frequencyHz} Hz`,
+    );
+  } catch (error) {
+    exportError.textContent = (error as Error).message;
+  } finally {
+    exportSubmit.disabled = false;
   }
 });
 

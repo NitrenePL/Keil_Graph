@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -42,6 +43,10 @@ def env_int(name: str, default: int) -> int:
     return default if value is None else int(value, 0)
 
 
+def format_csv_time(index: int, frequency_hz: int) -> str:
+    return f"{index / frequency_hz:.12f}".rstrip("0").rstrip(".") or "0"
+
+
 class ConfigUpdate(BaseModel):
     auto_refresh: bool | None = None
     interval_ms: int | None = Field(
@@ -67,6 +72,11 @@ class SourcesUpdate(BaseModel):
     )
 
 
+class CsvExportRequest(BaseModel):
+    channel_index: int = Field(ge=0)
+    frequency_hz: int = Field(ge=1, le=100_000_000)
+
+
 class SavedSettings(BaseModel):
     version: int = 1
     auto_refresh: bool
@@ -76,6 +86,12 @@ class SavedSettings(BaseModel):
     sources: list[SourceUpdate] = Field(
         min_length=1,
         max_length=MAX_SOURCES,
+    )
+    export_channel_index: int = Field(default=0, ge=0)
+    export_frequency_hz: int = Field(
+        default=20_000,
+        ge=1,
+        le=100_000_000,
     )
 
 
@@ -124,6 +140,8 @@ current_source_configs = [
         address=env_int("UVSC_ARRAY_ADDRESS", 0x200041E4),
     )
 ]
+current_export_channel_index = 0
+current_export_frequency_hz = 20_000
 service = UvscArrayService(
     workspace=WORKSPACE,
     port=env_int("UVSC_PORT", 35876),
@@ -186,6 +204,55 @@ async def refresh_now() -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@app.post("/api/export/csv")
+async def export_csv(config: CsvExportRequest) -> Response:
+    global current_export_channel_index, current_export_frequency_hz
+    status = service.get_status()
+    if status["auto_refresh"]:
+        raise HTTPException(
+            status_code=409,
+            detail="请先关闭自动刷新，再导出 CSV",
+        )
+
+    snapshot = service.get_latest()
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="尚无可导出的数组快照")
+    series = snapshot["series"]
+    if config.channel_index >= len(series):
+        raise HTTPException(status_code=422, detail="导出通道不存在")
+
+    channel = series[config.channel_index]
+    frequency = config.frequency_hz
+    lines = [
+        f"{format_csv_time(index, frequency)},{format(value, '.12g')}"
+        for index, value in enumerate(channel["values"])
+    ]
+    content = "\r\n".join(lines) + "\r\n"
+    safe_name = re.sub(
+        r"[^A-Za-z0-9_.-]+",
+        "_",
+        channel["array_name"],
+    ).strip("._") or f"channel_{config.channel_index + 1}"
+
+    current_export_channel_index = config.channel_index
+    current_export_frequency_hz = frequency
+    try:
+        save_current_settings()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"保存导出配置失败：{exc}",
+        ) from exc
+
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}.csv"',
+        },
+    )
+
+
 @app.put("/api/config")
 async def update_config(config: ConfigUpdate) -> dict[str, Any]:
     try:
@@ -225,6 +292,8 @@ async def get_source_options() -> dict[str, Any]:
             item.model_dump(mode="json") for item in current_source_configs
         ],
         "settings_file": str(SETTINGS_FILE),
+        "export_channel_index": current_export_channel_index,
+        "export_frequency_hz": current_export_frequency_hz,
         "max_sources": MAX_SOURCES,
     }
 
@@ -268,6 +337,7 @@ def resolve_source(
 
 
 def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
+    global current_export_channel_index
     global current_keil_path, current_map_file, current_source_configs
     map_file_text = (config.map_file or str(current_map_file)).strip()
     if not map_file_text:
@@ -289,6 +359,10 @@ def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
     current_map_file = map_file
     current_keil_path = keil_path
     current_source_configs = list(config.sources)
+    current_export_channel_index = min(
+        current_export_channel_index,
+        len(current_source_configs) - 1,
+    )
     return {
         "status": runtime["status"],
         "resolutions": [item[1] for item in resolved],
@@ -306,6 +380,8 @@ def current_saved_settings() -> SavedSettings:
         map_file=str(current_map_file),
         keil_path=str(current_keil_path),
         sources=current_source_configs,
+        export_channel_index=current_export_channel_index,
+        export_frequency_hz=current_export_frequency_hz,
     )
 
 
@@ -321,6 +397,7 @@ def save_current_settings() -> None:
 
 
 def restore_saved_settings() -> bool:
+    global current_export_channel_index, current_export_frequency_hz
     if not SETTINGS_FILE.is_file():
         return False
     payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
@@ -336,6 +413,11 @@ def restore_saved_settings() -> bool:
         auto_refresh=settings.auto_refresh,
         interval_ms=settings.interval_ms,
     )
+    current_export_channel_index = min(
+        settings.export_channel_index,
+        len(settings.sources) - 1,
+    )
+    current_export_frequency_hz = settings.export_frequency_hz
     return True
 
 

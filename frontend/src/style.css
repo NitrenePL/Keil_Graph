@@ -105,6 +105,11 @@ h2 {
   border-color: rgba(255, 148, 24, 0.42);
 }
 
+.config-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .connection {
   min-width: 172px;
   gap: 10px;
@@ -461,6 +466,19 @@ main {
   backdrop-filter: blur(3px);
 }
 
+.export-dialog {
+  width: min(470px, calc(100% - 32px));
+}
+
+.export-fields {
+  grid-template-columns: 1fr 1fr;
+}
+
+.export-fields .map-file-note,
+.export-fields .source-error {
+  grid-column: 1 / -1;
+}
+
 .dialog-heading {
   display: flex;
   align-items: center;
@@ -778,6 +796,10 @@ main {
   }
 
   .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .export-fields {
     grid-template-columns: 1fr;
   }
 

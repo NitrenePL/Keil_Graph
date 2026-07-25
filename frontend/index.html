@@ -23,6 +23,16 @@
             数据源
           </button>
 
+          <button
+            id="export-button"
+            class="config-button export-button"
+            type="button"
+            disabled
+          >
+            <span aria-hidden="true">⇩</span>
+            导出 CSV
+          </button>
+
           <div class="connection">
             <span id="connection-dot" class="status-dot"></span>
             <div>
@@ -185,6 +195,70 @@
               type="submit"
             >
               保存并读取
+            </button>
+          </footer>
+        </form>
+      </dialog>
+
+      <dialog id="export-dialog" class="source-dialog export-dialog">
+        <form id="export-form">
+          <header class="dialog-heading">
+            <div>
+              <p class="eyebrow">CSV EXPORT</p>
+              <h3>导出当前快照</h3>
+            </div>
+            <button
+              id="export-dialog-close"
+              class="dialog-close"
+              type="button"
+              aria-label="关闭"
+            >
+              ×
+            </button>
+          </header>
+
+          <div class="source-fields export-fields">
+            <label>
+              导出通道
+              <select id="export-channel" required></select>
+            </label>
+
+            <label>
+              采样频率
+              <span class="field-with-unit">
+                <input
+                  id="export-frequency"
+                  type="number"
+                  min="1"
+                  max="100000000"
+                  step="1"
+                  value="20000"
+                  required
+                />
+                <span>Hz</span>
+              </span>
+            </label>
+
+            <p class="map-file-note">
+              无表头两列 CSV：时间,值；时间从 0 开始
+            </p>
+            <p id="export-error" class="source-error"></p>
+          </div>
+
+          <footer class="dialog-actions">
+            <button
+              id="export-cancel"
+              class="dialog-button secondary"
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              id="export-submit"
+              class="dialog-button primary"
+              type="submit"
+            >
+              下载 CSV
             </button>
           </footer>
         </form>
