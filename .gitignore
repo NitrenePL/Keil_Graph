@@ -21,9 +21,8 @@ htmlcov/
 # Runtime waveform snapshots
 captures/
 
-# Frontend dependencies and build output
+# Frontend dependencies (frontend/dist is committed for npm-free deployment)
 node_modules/
-frontend/dist/
 
 # Downloaded Keil UVSOCK SDK/distribution
 apnt_198/

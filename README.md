@@ -13,21 +13,16 @@
 ## 环境
 
 - Python 3.12，使用仓库现有的 `.venv`
-- Node.js 22.23.1 / npm 10.9.8，由 Volta 根据 `frontend/package.json` 自动选择
 - Keil µVision 需要进入 Debug 模式，并启用 UVSOCK
 
-Node 不需要额外的虚拟环境。前端依赖安装在项目自己的
-`frontend/node_modules` 中。
+仓库已包含构建后的 `frontend/dist`，普通使用不需要安装 Node.js
+或 npm。只有修改并重新构建前端时，才需要 Node.js 22.23.1 /
+npm 10.9.8；Volta 会根据 `frontend/package.json` 自动选择版本。
 
 ## 首次安装
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-Set-Location .\frontend
-npm install
-npm run build
-Set-Location ..
 ```
 
 ## 启动
@@ -45,6 +40,16 @@ http://127.0.0.1:35877
 构建后的前端由 Python 服务直接提供，只需要启动一个进程。
 
 ## 前端开发
+
+前端开发依赖安装在项目自己的 `frontend/node_modules` 中，Node
+不需要额外的虚拟环境。首次开发前执行：
+
+```powershell
+Set-Location .\frontend
+npm install
+npm run build
+Set-Location ..
+```
 
 终端 1：
 
