@@ -1,4 +1,4 @@
-"""Thread-owned UVSC connection and array refresh scheduling."""
+"""Thread-owned UVSC connection and multi-array refresh scheduling."""
 
 from __future__ import annotations
 
@@ -11,19 +11,22 @@ import time
 from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
-from read_mylogger_once import DEFAULT_ADDRESS, DEFAULT_COUNT, ELEMENT_SIZE
+from backend.source_config import ArraySource, DATA_TYPES
+from read_mylogger_once import DEFAULT_ADDRESS, DEFAULT_COUNT
 from uvsc_smoke_test import UvscClient, UvscError, resolve_dll
 
 
 MIN_INTERVAL_MS = 50
 MAX_INTERVAL_MS = 60_000
+MAX_READ_BYTES = 65_536
+MAX_SOURCES = 8
 EventListener = Callable[[dict[str, Any]], None]
 
 
 class UvscArrayService:
-    """Keep all UVSC calls on one worker thread."""
+    """Keep every UVSC call on one worker thread."""
 
     def __init__(
         self,
@@ -31,15 +34,25 @@ class UvscArrayService:
         port: int = 35876,
         address: int = DEFAULT_ADDRESS,
         count: int = DEFAULT_COUNT,
+        array_name: str = "myLOGGER0Arr",
+        data_type: str = "float32",
+        sample_rate_hz: float = 20_000,
         interval_ms: int = 500,
         auto_refresh: bool = True,
         dll_path: Path | None = None,
     ) -> None:
         self.workspace = workspace
         self.port = port
-        self.address = address
-        self.count = count
         self.dll_path = dll_path
+
+        initial_source = ArraySource(
+            name=array_name.strip(),
+            address=address,
+            count=count,
+            data_type=data_type,
+            sample_rate_hz=sample_rate_hz,
+        )
+        self._validate_sources((initial_source,))
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -50,6 +63,7 @@ class UvscArrayService:
         self._client: UvscClient | None = None
         self._sequence = 0
         self._latest: dict[str, Any] | None = None
+        self._sources = (initial_source,)
         self._connected = False
         self._target_state = "unknown"
         self._last_error: str | None = None
@@ -80,14 +94,14 @@ class UvscArrayService:
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
+            first = self._sources[0]
             return {
                 "connected": self._connected,
                 "target_state": self._target_state,
                 "port": self.port,
-                "address": self.address,
-                "address_hex": f"0x{self.address:08X}",
-                "count": self.count,
-                "dtype": "float32",
+                "sources": [source.as_status() for source in self._sources],
+                # Keep the first source at the top level for older clients.
+                **first.as_status(),
                 "auto_refresh": self._auto_refresh,
                 "interval_ms": self._interval_ms,
                 "last_error": self._last_error,
@@ -116,7 +130,44 @@ class UvscArrayService:
         self._emit({"type": "status", "data": status})
         return status
 
-    def refresh_now(self, timeout: float = 5.0) -> dict[str, Any]:
+    def configure_sources(
+        self,
+        sources: Iterable[ArraySource],
+    ) -> dict[str, Any]:
+        source_tuple = tuple(sources)
+        self._validate_sources(source_tuple)
+        with self._lock:
+            self._sources = source_tuple
+            self._latest = None
+            self._last_error = None
+            status = self.get_status()
+        self._wake_event.set()
+        self._emit({"type": "status", "data": status})
+        return status
+
+    def configure_source(
+        self,
+        *,
+        array_name: str,
+        address: int,
+        count: int,
+        data_type: str,
+        sample_rate_hz: float,
+    ) -> dict[str, Any]:
+        """Backward-compatible single-source configuration."""
+        return self.configure_sources(
+            (
+                ArraySource(
+                    name=array_name.strip(),
+                    address=address,
+                    count=count,
+                    data_type=data_type,
+                    sample_rate_hz=sample_rate_hz,
+                ),
+            )
+        )
+
+    def refresh_now(self, timeout: float = 10.0) -> dict[str, Any]:
         if self._thread is None or not self._thread.is_alive():
             raise UvscError("UVSC 服务尚未启动")
         future: Future[dict[str, Any]] = Future()
@@ -130,6 +181,37 @@ class UvscArrayService:
                 f"刷新间隔必须在 {MIN_INTERVAL_MS}～{MAX_INTERVAL_MS} ms 之间"
             )
         self._interval_ms = interval_ms
+
+    def _validate_sources(self, sources: tuple[ArraySource, ...]) -> None:
+        if not sources:
+            raise ValueError("至少需要配置一条曲线")
+        if len(sources) > MAX_SOURCES:
+            raise ValueError(f"最多支持 {MAX_SOURCES} 条曲线")
+
+        names: set[str] = set()
+        for source in sources:
+            name = source.name.strip()
+            if not name:
+                raise ValueError("数组名称不能为空")
+            if name in names:
+                raise ValueError(f"数组名称不能重复：{name}")
+            names.add(name)
+            if not 0 <= source.address <= 0xFFFFFFFFFFFFFFFF:
+                raise ValueError(f"{name} 地址超出范围：0x{source.address:X}")
+            if source.data_type not in DATA_TYPES:
+                raise ValueError(f"{name} 使用了不支持的数据类型：{source.data_type}")
+            if source.count <= 0:
+                raise ValueError(f"{name} 的元素数量必须大于 0")
+            byte_count = (
+                source.count * DATA_TYPES[source.data_type].byte_size
+            )
+            if byte_count > MAX_READ_BYTES:
+                raise ValueError(
+                    f"{name} 单次读取不能超过 {MAX_READ_BYTES} 字节，"
+                    f"当前配置为 {byte_count} 字节"
+                )
+            if not 0 < source.sample_rate_hz <= 100_000_000:
+                raise ValueError(f"{name} 的采样频率必须在 0～100 MHz 之间")
 
     def _run(self) -> None:
         next_refresh = time.monotonic()
@@ -154,7 +236,11 @@ class UvscArrayService:
 
                 now = time.monotonic()
                 if self._client is not None and auto_refresh and now >= next_refresh:
-                    self._capture("auto")
+                    try:
+                        self._capture("auto")
+                    except Exception:
+                        # Error state is already published by _capture.
+                        pass
                     next_refresh += interval_seconds
                     if next_refresh < time.monotonic():
                         next_refresh = time.monotonic() + interval_seconds
@@ -207,7 +293,9 @@ class UvscArrayService:
                 return
 
             if self._client is None:
-                future.set_exception(UvscError(self._last_error or "UVSC 未连接"))
+                future.set_exception(
+                    UvscError(self._last_error or "UVSC 未连接")
+                )
                 continue
             try:
                 future.set_result(self._capture("manual"))
@@ -218,19 +306,46 @@ class UvscArrayService:
         if self._client is None:
             raise UvscError("UVSC 未连接")
 
-        started = time.perf_counter()
+        with self._lock:
+            sources = self._sources
+
+        capture_started = time.perf_counter()
+        series: list[dict[str, Any]] = []
         try:
-            raw = self._client.read_memory(
-                self.address,
-                self.count * ELEMENT_SIZE,
-            )
-            values = struct.unpack(f"<{self.count}f", raw)
+            for source in sources:
+                data_type = DATA_TYPES[source.data_type]
+                read_started = time.perf_counter()
+                raw = self._client.read_memory(
+                    source.address,
+                    source.count * data_type.byte_size,
+                )
+                values = struct.unpack(
+                    f"<{source.count}{data_type.struct_code}",
+                    raw,
+                )
+                finite = [value for value in values if math.isfinite(value)]
+                series.append(
+                    {
+                        **source.as_status(),
+                        "read_duration_ms": round(
+                            (time.perf_counter() - read_started) * 1000,
+                            3,
+                        ),
+                        "values": values,
+                        "stats": {
+                            "min": min(finite) if finite else None,
+                            "max": max(finite) if finite else None,
+                            "mean": (
+                                statistics.fmean(finite) if finite else None
+                            ),
+                            "non_finite": len(values) - len(finite),
+                        },
+                    }
+                )
         except Exception as exc:
             self._record_error(str(exc), connected=True)
             raise
 
-        duration_ms = (time.perf_counter() - started) * 1000
-        finite = [value for value in values if math.isfinite(value)]
         self._sequence += 1
         snapshot = {
             "sequence": self._sequence,
@@ -238,17 +353,25 @@ class UvscArrayService:
                 timespec="milliseconds"
             ),
             "trigger": trigger,
-            "address": self.address,
-            "count": self.count,
-            "read_duration_ms": round(duration_ms, 3),
-            "values": values,
-            "stats": {
-                "min": min(finite) if finite else None,
-                "max": max(finite) if finite else None,
-                "mean": statistics.fmean(finite) if finite else None,
-                "non_finite": len(values) - len(finite),
-            },
+            "read_duration_ms": round(
+                (time.perf_counter() - capture_started) * 1000,
+                3,
+            ),
+            "series": series,
         }
+        # Preserve legacy fields for existing single-series consumers.
+        first = series[0]
+        snapshot.update(
+            {
+                "array_name": first["array_name"],
+                "address": first["address"],
+                "count": first["count"],
+                "dtype": first["dtype"],
+                "sample_rate_hz": first["sample_rate_hz"],
+                "values": first["values"],
+                "stats": first["stats"],
+            }
+        )
         with self._lock:
             self._latest = snapshot
             self._last_error = None

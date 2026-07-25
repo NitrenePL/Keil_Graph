@@ -15,13 +15,24 @@ from pydantic import BaseModel, Field
 
 from backend.array_service import (
     MAX_INTERVAL_MS,
+    MAX_SOURCES,
     MIN_INTERVAL_MS,
     UvscArrayService,
 )
+from backend.source_config import ArraySource, DATA_TYPES, MapSymbolResolver
 
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 FRONTEND_DIST = WORKSPACE / "frontend" / "dist"
+DEFAULT_MAP_FILE = Path(
+    os.getenv(
+        "UVSC_MAP_FILE",
+        (
+            r"D:\STM32_prj\APF_Display_F4\MDK-ARM"
+            r"\APF_Display_F4\APF_Display_F4.map"
+        ),
+    )
+)
 
 
 def env_int(name: str, default: int) -> int:
@@ -35,6 +46,21 @@ class ConfigUpdate(BaseModel):
         default=None,
         ge=MIN_INTERVAL_MS,
         le=MAX_INTERVAL_MS,
+    )
+
+
+class SourceUpdate(BaseModel):
+    array_name: str = Field(min_length=1, max_length=256)
+    count: int = Field(ge=1)
+    dtype: str
+    sample_rate_hz: float = Field(gt=0, le=100_000_000)
+    address: int | str | None = None
+
+
+class SourcesUpdate(BaseModel):
+    sources: list[SourceUpdate] = Field(
+        min_length=1,
+        max_length=MAX_SOURCES,
     )
 
 
@@ -68,11 +94,15 @@ class WebSocketHub:
 
 
 hub = WebSocketHub()
+symbol_resolver = MapSymbolResolver(DEFAULT_MAP_FILE)
 service = UvscArrayService(
     workspace=WORKSPACE,
     port=env_int("UVSC_PORT", 35876),
     address=env_int("UVSC_ARRAY_ADDRESS", 0x200041E4),
     count=env_int("UVSC_ARRAY_COUNT", 400),
+    array_name=os.getenv("UVSC_ARRAY_NAME", "myLOGGER0Arr"),
+    data_type=os.getenv("UVSC_ARRAY_DTYPE", "float32"),
+    sample_rate_hz=float(os.getenv("UVSC_SAMPLE_RATE_HZ", "20000")),
     interval_ms=env_int("UVSC_INTERVAL_MS", 500),
     auto_refresh=os.getenv("UVSC_AUTO_REFRESH", "1") != "0",
 )
@@ -131,6 +161,87 @@ async def update_config(config: ConfigUpdate) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def parse_address(value: int | str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value.strip(), 0)
+    except ValueError as exc:
+        raise ValueError(f"无效的数组地址：{value!r}") from exc
+
+
+@app.get("/api/source/options")
+async def get_source_options() -> dict[str, Any]:
+    return {
+        "data_types": list(DATA_TYPES),
+        "map_file": str(DEFAULT_MAP_FILE),
+        "max_sources": MAX_SOURCES,
+    }
+
+
+def resolve_source(config: SourceUpdate) -> tuple[ArraySource, dict[str, Any]]:
+    data_type = DATA_TYPES.get(config.dtype)
+    if data_type is None:
+        raise ValueError(f"不支持的数据类型：{config.dtype}")
+
+    address = parse_address(config.address)
+    resolved_size: int | None = None
+    resolved_from_map = address is None
+    if address is None:
+        symbol = symbol_resolver.resolve(config.array_name)
+        address = symbol.address
+        resolved_size = symbol.byte_size
+        requested_size = config.count * data_type.byte_size
+        if requested_size > symbol.byte_size:
+            raise ValueError(
+                f"{config.array_name} 在 MAP 中占 {symbol.byte_size} 字节，"
+                f"当前配置需要读取 {requested_size} 字节"
+            )
+
+    source = ArraySource(
+        name=config.array_name.strip(),
+        address=address,
+        count=config.count,
+        data_type=config.dtype,
+        sample_rate_hz=config.sample_rate_hz,
+    )
+    resolution = {
+        "array_name": source.name,
+        "address": source.address,
+        "address_hex": f"0x{source.address:08X}",
+        "resolved_from_map": resolved_from_map,
+        "resolved_byte_size": resolved_size,
+    }
+    return source, resolution
+
+
+@app.put("/api/sources")
+async def update_sources(config: SourcesUpdate) -> dict[str, Any]:
+    try:
+        resolved = [resolve_source(item) for item in config.sources]
+        status = service.configure_sources(item[0] for item in resolved)
+        return {
+            "status": status,
+            "resolutions": [item[1] for item in resolved],
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put("/api/source")
+async def update_source(config: SourceUpdate) -> dict[str, Any]:
+    """Backward-compatible single-source endpoint."""
+    result = await update_sources(SourcesUpdate(sources=[config]))
+    resolution = result["resolutions"][0]
+    return {
+        "status": result["status"],
+        "resolved_from_map": resolution["resolved_from_map"],
+        "resolved_byte_size": resolution["resolved_byte_size"],
+    }
 
 
 @app.websocket("/ws")

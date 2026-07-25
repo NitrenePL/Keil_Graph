@@ -39,7 +39,7 @@ Set-Location ..
 浏览器访问：
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:35877
 ```
 
 构建后的前端由 Python 服务直接提供，只需要启动一个进程。
@@ -67,6 +67,9 @@ npm run dev
 - 自动刷新开关
 - `50～60000 ms` 刷新间隔设置
 - 手动立即刷新
+- 在同一张图中显示最多 8 条数组曲线
+- 每条曲线独立配置数组名称、元素数量、数据类型、采样频率和地址
+- 根据 Arm linker MAP 文件分别自动解析全局数组地址
 - WebSocket 实时推送
 - 400 点时域波形
 - 可配置采样频率，用于计算横轴时间
@@ -78,6 +81,10 @@ npm run dev
 $env:UVSC_PORT = "35876"
 $env:UVSC_ARRAY_ADDRESS = "0x200041E4"
 $env:UVSC_ARRAY_COUNT = "400"
+$env:UVSC_ARRAY_NAME = "myLOGGER0Arr"
+$env:UVSC_ARRAY_DTYPE = "float32"
+$env:UVSC_SAMPLE_RATE_HZ = "20000"
+$env:UVSC_MAP_FILE = "D:\path\to\application.map"
 $env:UVSC_INTERVAL_MS = "500"
 $env:UVSC_AUTO_REFRESH = "1"
 ```

@@ -18,6 +18,11 @@
         </div>
 
         <div class="top-actions">
+          <button id="source-config-button" class="config-button" type="button">
+            <span aria-hidden="true">⚙</span>
+            数据源
+          </button>
+
           <div class="connection">
             <span id="connection-dot" class="status-dot"></span>
             <div>
@@ -61,7 +66,7 @@
           <div class="chart-heading">
             <div>
               <div class="title-line">
-                <h2>myLOGGER0Arr</h2>
+                <h2 id="array-name-title">myLOGGER0Arr</h2>
                 <span id="trigger-badge" class="trigger-badge">等待数据</span>
               </div>
               <p class="subtitle">
@@ -73,7 +78,7 @@
 
             <div class="legend" aria-label="波形图例">
               <span class="legend-line"></span>
-              <span>myLOGGER0Arr</span>
+              <span id="legend-label">myLOGGER0Arr</span>
             </div>
           </div>
 
@@ -86,8 +91,8 @@
                 <strong id="target-state">—</strong>
               </span>
               <span>
-                Address
-                <strong id="memory-address">0x200041E4</strong>
+                Curves
+                <strong id="memory-address">1</strong>
               </span>
               <span>
                 Port
@@ -104,6 +109,131 @@
           <p id="control-message" class="control-message"></p>
         </section>
       </main>
+
+      <dialog id="source-dialog" class="source-dialog">
+        <form id="source-form">
+          <header class="dialog-heading">
+            <div>
+              <p class="eyebrow">DATA SOURCE</p>
+              <h3>读取配置</h3>
+            </div>
+            <button
+              id="source-dialog-close"
+              class="dialog-close"
+              type="button"
+              aria-label="关闭"
+            >
+              ×
+            </button>
+          </header>
+
+          <div class="source-fields">
+            <div class="source-list-heading">
+              <div>
+                <strong>曲线列表</strong>
+                <small>同一刷新周期内依次读取并绘制</small>
+              </div>
+              <button id="add-source" class="add-source-button" type="button">
+                ＋ 添加曲线
+              </button>
+            </div>
+
+            <div id="source-list" class="source-list"></div>
+
+            <p id="map-file-note" class="map-file-note">MAP：正在读取…</p>
+            <p id="source-error" class="source-error"></p>
+          </div>
+
+          <footer class="dialog-actions">
+            <button
+              id="source-cancel"
+              class="dialog-button secondary"
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              id="source-save"
+              class="dialog-button primary"
+              type="submit"
+            >
+              保存并读取
+            </button>
+          </footer>
+        </form>
+      </dialog>
+
+      <template id="source-row-template">
+        <article class="source-row">
+          <header>
+            <div class="source-number">曲线 1</div>
+            <button
+              class="remove-source"
+              type="button"
+              aria-label="删除曲线"
+            >
+              删除
+            </button>
+          </header>
+
+          <div class="source-row-fields">
+            <label class="source-name-field">
+              数组名称
+              <input
+                data-field="name"
+                type="text"
+                required
+                maxlength="256"
+                autocomplete="off"
+              />
+            </label>
+
+            <label>
+              元素数量
+              <input data-field="count" type="number" min="1" required />
+            </label>
+
+            <label>
+              数据类型
+              <select data-field="dtype">
+                <option value="float32">float32</option>
+                <option value="float64">float64</option>
+                <option value="int8">int8</option>
+                <option value="uint8">uint8</option>
+                <option value="int16">int16</option>
+                <option value="uint16">uint16</option>
+                <option value="int32">int32</option>
+                <option value="uint32">uint32</option>
+              </select>
+            </label>
+
+            <label>
+              采样频率
+              <span class="field-with-unit">
+                <input
+                  data-field="sample-rate"
+                  type="number"
+                  min="0.001"
+                  max="100000000"
+                  step="1"
+                  required
+                />
+                <span>Hz</span>
+              </span>
+            </label>
+
+            <label class="source-address-field">
+              起始地址（可选）
+              <input
+                data-field="address"
+                type="text"
+                placeholder="留空按 MAP 解析"
+                autocomplete="off"
+              />
+            </label>
+          </div>
+        </article>
+      </template>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
