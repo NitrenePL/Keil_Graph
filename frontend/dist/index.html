@@ -8,8 +8,8 @@
       content="通过 Keil UVSC 实时查看 STM32 数组波形"
     />
     <title>Keil Array Viewer</title>
-    <script type="module" crossorigin src="/assets/index-D0GxKgpN.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BB3UQwaH.css">
+    <script type="module" crossorigin src="/assets/index-j4Z1z1gJ.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Btv9RlTg.css">
   </head>
   <body>
     <div id="app">
@@ -119,6 +119,84 @@
           </footer>
 
           <p id="control-message" class="control-message"></p>
+        </section>
+
+        <section id="fft-panel" class="fft-panel">
+          <header class="fft-heading">
+            <div>
+              <p class="eyebrow">FOURIER / HARMONICS</p>
+              <div class="title-line">
+                <h2>谐波分析</h2>
+                <span id="fft-snapshot" class="trigger-badge">等待数据</span>
+              </div>
+            </div>
+
+            <div class="fft-controls">
+              <label>
+                通道
+                <select id="fft-channel"></select>
+              </label>
+              <label>
+                采样频率 / Hz
+                <input
+                  id="fft-sample-frequency"
+                  type="number"
+                  min="1"
+                  max="100000000"
+                  step="1"
+                  value="20000"
+                />
+              </label>
+              <label>
+                基波 / Hz
+                <input
+                  id="fft-base-frequency"
+                  type="number"
+                  min="1"
+                  max="100000000"
+                  step="1"
+                  value="50"
+                />
+              </label>
+              <label>
+                谐波次数
+                <input
+                  id="fft-harmonic-count"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  step="1"
+                  value="20"
+                />
+              </label>
+              <label>
+                窗函数
+                <select id="fft-window">
+                  <option value="rectangular">Rectangular</option>
+                  <option value="hann" selected>Hann / 汉宁</option>
+                  <option value="hamming">Hamming / 汉明</option>
+                </select>
+              </label>
+              <label>
+                幅值
+                <select id="fft-amplitude">
+                  <option value="rms" selected>RMS</option>
+                  <option value="amp">Amp</option>
+                </select>
+              </label>
+              <button id="fft-analyze" class="fft-analyze-button" type="button">
+                更新分析
+              </button>
+            </div>
+          </header>
+
+          <div id="fft-waveform" class="fft-waveform"></div>
+
+          <footer class="fft-footer">
+            <span id="fft-range">H0 · DC</span>
+            <span id="fft-detail">等待波形快照</span>
+          </footer>
+          <p id="fft-message" class="fft-message"></p>
         </section>
       </main>
 

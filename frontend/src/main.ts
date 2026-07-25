@@ -1,6 +1,11 @@
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
+import {
+  calculateHarmonics,
+  type FftConfig,
+  type HarmonicAnalysis,
+} from "./harmonics";
 
 interface SourceStatus {
   array_name: string;
@@ -47,6 +52,7 @@ interface SourceOptions {
   settings_file: string;
   export_channel_index: number;
   export_frequency_hz: number;
+  fft_config: FftConfig;
   max_sources: number;
 }
 
@@ -119,6 +125,18 @@ const exportSubmit = byId<HTMLButtonElement>("export-submit");
 const exportChannel = byId<HTMLSelectElement>("export-channel");
 const exportFrequency = byId<HTMLInputElement>("export-frequency");
 const exportError = byId<HTMLParagraphElement>("export-error");
+const fftWaveform = byId<HTMLDivElement>("fft-waveform");
+const fftChannel = byId<HTMLSelectElement>("fft-channel");
+const fftSampleFrequency = byId<HTMLInputElement>("fft-sample-frequency");
+const fftBaseFrequency = byId<HTMLInputElement>("fft-base-frequency");
+const fftHarmonicCount = byId<HTMLInputElement>("fft-harmonic-count");
+const fftWindow = byId<HTMLSelectElement>("fft-window");
+const fftAmplitude = byId<HTMLSelectElement>("fft-amplitude");
+const fftAnalyze = byId<HTMLButtonElement>("fft-analyze");
+const fftSnapshot = byId<HTMLSpanElement>("fft-snapshot");
+const fftRange = byId<HTMLSpanElement>("fft-range");
+const fftDetail = byId<HTMLSpanElement>("fft-detail");
+const fftMessage = byId<HTMLParagraphElement>("fft-message");
 
 let latestSnapshot: Snapshot | null = null;
 let latestStatus: ViewerStatus | null = null;
@@ -127,10 +145,24 @@ let reconnectTimer: number | undefined;
 let configTimer: number | undefined;
 let plot: uPlot | null = null;
 let plottedSignature = "";
+let fftPlot: uPlot | null = null;
+let fftAnalysis: HarmonicAnalysis | null = null;
+let fftAnalysisTimer: number | undefined;
+let activeFftConfig: FftConfig = {
+  channel_index: 0,
+  sample_frequency_hz: 20_000,
+  base_frequency_hz: 50,
+  harmonic_count: 20,
+  window: "hann",
+  amplitude: "rms",
+};
 
 const pointTooltip = document.createElement("div");
 pointTooltip.className = "point-tooltip";
 pointTooltip.hidden = true;
+const fftTooltip = document.createElement("div");
+fftTooltip.className = "point-tooltip fft-tooltip";
+fftTooltip.hidden = true;
 
 const normalizedSources = (status: ViewerStatus): SourceStatus[] =>
   status.sources?.length
@@ -290,6 +322,281 @@ const resizePlot = (): void => {
 
 new ResizeObserver(resizePlot).observe(waveform);
 
+const drawFftBars = (instance: uPlot): void => {
+  if (!fftAnalysis) return;
+  const ratio = window.devicePixelRatio || 1;
+  const zero = instance.valToPos(0, "y", true);
+  const spacing =
+    fftAnalysis.frequencies.length > 1
+      ? Math.abs(
+          instance.valToPos(fftAnalysis.frequencies[1], "x", true)
+            - instance.valToPos(0, "x", true),
+        )
+      : 20 * ratio;
+  const width = Math.max(1 * ratio, Math.min(10 * ratio, spacing * 0.55));
+  const context = instance.ctx;
+  context.save();
+  context.beginPath();
+  context.rect(
+    instance.bbox.left,
+    instance.bbox.top,
+    instance.bbox.width,
+    instance.bbox.height,
+  );
+  context.clip();
+  context.fillStyle = "#35d04f";
+  fftAnalysis.amplitudes.forEach((amplitude, index) => {
+    const x = instance.valToPos(fftAnalysis!.frequencies[index], "x", true);
+    const y = instance.valToPos(amplitude, "y", true);
+    context.fillRect(
+      Math.round(x - width / 2),
+      Math.min(y, zero),
+      width,
+      Math.max(Math.abs(zero - y), ratio),
+    );
+  });
+  context.restore();
+};
+
+const updateFftCursor = (instance: uPlot): void => {
+  const index = instance.cursor.idx;
+  if (
+    index === null
+    || index === undefined
+    || !fftAnalysis
+    || index >= fftAnalysis.amplitudes.length
+  ) {
+    fftTooltip.hidden = true;
+    return;
+  }
+  const harmonic = index === 0 ? "H0 / DC" : `H${index}`;
+  const unit = fftAnalysis.config.amplitude === "rms" ? "RMS" : "Amp";
+  fftTooltip.textContent =
+    `${harmonic} · ${fftAnalysis.frequencies[index]} Hz · `
+      + `${fftAnalysis.amplitudes[index].toPrecision(8)} ${unit}`;
+  const left = instance.cursor.left ?? 0;
+  const top = instance.cursor.top ?? 0;
+  fftTooltip.hidden = false;
+  const maxLeft = Math.max(
+    instance.over.clientWidth - fftTooltip.offsetWidth - 8,
+    8,
+  );
+  const maxTop = Math.max(
+    instance.over.clientHeight - fftTooltip.offsetHeight - 8,
+    8,
+  );
+  fftTooltip.style.left = `${Math.min(left + 14, maxLeft)}px`;
+  fftTooltip.style.top = `${Math.min(top + 14, maxTop)}px`;
+};
+
+const createFftPlot = (): void => {
+  fftPlot?.destroy();
+  fftWaveform.replaceChildren();
+  fftTooltip.hidden = true;
+  fftPlot = new uPlot(
+    {
+      width: Math.max(fftWaveform.clientWidth, 320),
+      height: Math.max(fftWaveform.clientHeight, 360),
+      cursor: {
+        drag: { x: true, y: false },
+        points: { size: 0 },
+      },
+      hooks: {
+        ready: [
+          (instance) => {
+            instance.over.appendChild(fftTooltip);
+          },
+        ],
+        draw: [drawFftBars],
+        setCursor: [updateFftCursor],
+      },
+      scales: {
+        x: { time: false },
+        y: {
+          auto: true,
+          range: (_instance, minimum, maximum) => {
+            const low = Math.min(0, minimum);
+            const high = Math.max(0, maximum);
+            const span = Math.max(high - low, 1e-9);
+            return [low - span * 0.05, high + span * 0.08];
+          },
+        },
+      },
+      axes: [
+        {
+          stroke: "#8190a0",
+          grid: { stroke: "rgba(161, 175, 190, 0.2)", width: 1 },
+          ticks: { stroke: "rgba(161, 175, 190, 0.28)", width: 1 },
+          label: "Frequency / Hz",
+          labelSize: 32,
+        },
+        {
+          stroke: "#8190a0",
+          grid: { stroke: "rgba(161, 175, 190, 0.2)", width: 1 },
+          ticks: { stroke: "rgba(161, 175, 190, 0.28)", width: 1 },
+          label: "Amplitude",
+          labelSize: 42,
+          size: 64,
+        },
+      ],
+      series: [
+        {},
+        {
+          label: "Harmonics",
+          stroke: "rgba(53, 208, 79, 0)",
+          width: 0,
+          points: { show: false },
+        },
+      ],
+    },
+    [[], []],
+    fftWaveform,
+  );
+};
+
+const resizeFftPlot = (): void => {
+  if (!fftPlot) return;
+  fftPlot.setSize({
+    width: Math.max(fftWaveform.clientWidth, 320),
+    height: Math.max(fftWaveform.clientHeight, 360),
+  });
+};
+
+new ResizeObserver(resizeFftPlot).observe(fftWaveform);
+
+const applyFftConfigToControls = (config: FftConfig): void => {
+  fftSampleFrequency.value = String(config.sample_frequency_hz);
+  fftBaseFrequency.value = String(config.base_frequency_hz);
+  fftHarmonicCount.value = String(config.harmonic_count);
+  fftWindow.value = config.window;
+  fftAmplitude.value = config.amplitude;
+};
+
+const readFftConfig = (): FftConfig => {
+  const integer = (input: HTMLInputElement, label: string): number => {
+    const value = Number(input.value);
+    if (!input.checkValidity() || !Number.isInteger(value)) {
+      throw new Error(`${label}必须是有效整数`);
+    }
+    return value;
+  };
+  const config: FftConfig = {
+    channel_index: Number(fftChannel.value),
+    sample_frequency_hz: integer(fftSampleFrequency, "采样频率"),
+    base_frequency_hz: integer(fftBaseFrequency, "基波频率"),
+    harmonic_count: integer(fftHarmonicCount, "谐波次数"),
+    window: fftWindow.value as FftConfig["window"],
+    amplitude: fftAmplitude.value as FftConfig["amplitude"],
+  };
+  if (config.base_frequency_hz * 2 > config.sample_frequency_hz) {
+    throw new Error("基波频率不能超过采样频率的一半");
+  }
+  return config;
+};
+
+const updateFftChannelOptions = (snapshot: Snapshot): void => {
+  const channelIndex = Math.min(
+    activeFftConfig.channel_index,
+    snapshot.series.length - 1,
+  );
+  fftChannel.replaceChildren();
+  snapshot.series.forEach((series, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = `${index + 1} · ${series.array_name}`;
+    fftChannel.appendChild(option);
+  });
+  fftChannel.value = String(channelIndex);
+  activeFftConfig = { ...activeFftConfig, channel_index: channelIndex };
+};
+
+const runFftAnalysis = (): void => {
+  if (!latestSnapshot?.series.length) {
+    fftMessage.textContent = "尚无可分析的波形快照";
+    fftMessage.classList.add("error");
+    return;
+  }
+  const channelIndex = Math.min(
+    activeFftConfig.channel_index,
+    latestSnapshot.series.length - 1,
+  );
+  const channel = latestSnapshot.series[channelIndex];
+  fftAnalysis = calculateHarmonics(channel.values, {
+    ...activeFftConfig,
+    channel_index: channelIndex,
+  });
+  if (!fftPlot) createFftPlot();
+  fftPlot?.setData([
+    fftAnalysis.frequencies,
+    fftAnalysis.amplitudes,
+  ]);
+  fftSnapshot.textContent = `Snapshot #${latestSnapshot.sequence}`;
+  fftSnapshot.classList.toggle(
+    "manual",
+    latestSnapshot.trigger === "manual",
+  );
+  fftRange.textContent =
+    `H0–H${fftAnalysis.effectiveHarmonics} · `
+      + `0–${fftAnalysis.effectiveHarmonics
+        * activeFftConfig.base_frequency_hz} Hz`;
+  const windowLabel = {
+    rectangular: "Rectangular",
+    hann: "Hann",
+    hamming: "Hamming",
+  }[activeFftConfig.window];
+  fftDetail.textContent =
+    `${channel.array_name} · ${windowLabel} · `
+      + `${activeFftConfig.amplitude === "rms" ? "RMS" : "Amp"}`;
+
+  const warnings: string[] = [];
+  if (
+    fftAnalysis.effectiveHarmonics
+    < fftAnalysis.requestedHarmonics
+  ) {
+    warnings.push(
+      `受 Nyquist 限制，配置 H${fftAnalysis.requestedHarmonics}，`
+        + `当前实际分析到 H${fftAnalysis.effectiveHarmonics}`,
+    );
+  }
+  if (fftAnalysis.nonFiniteSamples > 0) {
+    warnings.push(
+      `${fftAnalysis.nonFiniteSamples} 个非有限采样值按 0 处理`,
+    );
+  }
+  fftMessage.textContent =
+    warnings.join("；") || `${channel.values.length} 点谐波分析完成`;
+  fftMessage.classList.toggle("error", warnings.length > 0);
+};
+
+const scheduleFftAnalysis = (): void => {
+  if (fftAnalysisTimer !== undefined) return;
+  fftAnalysisTimer = window.setTimeout(() => {
+    fftAnalysisTimer = undefined;
+    runFftAnalysis();
+  }, 200);
+};
+
+fftAnalyze.addEventListener("click", async () => {
+  fftAnalyze.disabled = true;
+  fftMessage.textContent = "正在更新谐波分析…";
+  fftMessage.classList.remove("error");
+  try {
+    const config = readFftConfig();
+    activeFftConfig = await requestJson<FftConfig>("/api/fft/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    if (sourceOptions) sourceOptions.fft_config = activeFftConfig;
+    runFftAnalysis();
+  } catch (error) {
+    fftMessage.textContent = (error as Error).message;
+    fftMessage.classList.add("error");
+  } finally {
+    fftAnalyze.disabled = false;
+  }
+});
+
 const setMessage = (message: string, error = false): void => {
   controlMessage.textContent = message;
   controlMessage.classList.toggle("error", error);
@@ -361,6 +668,8 @@ const updateSnapshot = (snapshot: Snapshot): void => {
   ]);
   plot?.setData([indices, ...alignedSeries]);
   updateExportAvailability();
+  updateFftChannelOptions(snapshot);
+  scheduleFftAnalysis();
 };
 
 const requestJson = async <T>(
@@ -383,6 +692,8 @@ const loadInitialState = async (): Promise<void> => {
     requestJson<SourceOptions>("/api/source/options"),
   ]);
   sourceOptions = options;
+  activeFftConfig = options.fft_config;
+  applyFftConfigToControls(activeFftConfig);
   updateStatus(status);
   mapFileNote.textContent =
     `配置自动保存 · 留空的数组地址将从 MAP 解析 · `

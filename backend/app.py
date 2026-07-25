@@ -8,7 +8,7 @@ import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
@@ -77,6 +77,23 @@ class CsvExportRequest(BaseModel):
     frequency_hz: int = Field(ge=1, le=100_000_000)
 
 
+class FftConfig(BaseModel):
+    channel_index: int = Field(default=0, ge=0)
+    sample_frequency_hz: int = Field(
+        default=20_000,
+        ge=1,
+        le=100_000_000,
+    )
+    base_frequency_hz: int = Field(
+        default=50,
+        ge=1,
+        le=100_000_000,
+    )
+    harmonic_count: int = Field(default=20, ge=1, le=1000)
+    window: Literal["rectangular", "hann", "hamming"] = "hann"
+    amplitude: Literal["rms", "amp"] = "rms"
+
+
 class SavedSettings(BaseModel):
     version: int = 1
     auto_refresh: bool
@@ -93,6 +110,7 @@ class SavedSettings(BaseModel):
         ge=1,
         le=100_000_000,
     )
+    fft: FftConfig = Field(default_factory=FftConfig)
 
 
 class WebSocketHub:
@@ -142,6 +160,7 @@ current_source_configs = [
 ]
 current_export_channel_index = 0
 current_export_frequency_hz = 20_000
+current_fft_config = FftConfig()
 service = UvscArrayService(
     workspace=WORKSPACE,
     port=env_int("UVSC_PORT", 35876),
@@ -271,6 +290,27 @@ async def update_config(config: ConfigUpdate) -> dict[str, Any]:
         ) from exc
 
 
+@app.put("/api/fft/config")
+async def update_fft_config(config: FftConfig) -> dict[str, Any]:
+    global current_fft_config
+    if config.channel_index >= len(current_source_configs):
+        raise HTTPException(status_code=422, detail="FFT 分析通道不存在")
+    if config.base_frequency_hz * 2 > config.sample_frequency_hz:
+        raise HTTPException(
+            status_code=422,
+            detail="基波频率不能超过采样频率的一半",
+        )
+    current_fft_config = config
+    try:
+        save_current_settings()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"保存 FFT 配置失败：{exc}",
+        ) from exc
+    return config.model_dump(mode="json")
+
+
 def parse_address(value: int | str | None) -> int | None:
     if value is None or value == "":
         return None
@@ -294,6 +334,7 @@ async def get_source_options() -> dict[str, Any]:
         "settings_file": str(SETTINGS_FILE),
         "export_channel_index": current_export_channel_index,
         "export_frequency_hz": current_export_frequency_hz,
+        "fft_config": current_fft_config.model_dump(mode="json"),
         "max_sources": MAX_SOURCES,
     }
 
@@ -338,6 +379,7 @@ def resolve_source(
 
 def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
     global current_export_channel_index
+    global current_fft_config
     global current_keil_path, current_map_file, current_source_configs
     map_file_text = (config.map_file or str(current_map_file)).strip()
     if not map_file_text:
@@ -363,6 +405,10 @@ def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
         current_export_channel_index,
         len(current_source_configs) - 1,
     )
+    if current_fft_config.channel_index >= len(current_source_configs):
+        current_fft_config = current_fft_config.model_copy(
+            update={"channel_index": 0}
+        )
     return {
         "status": runtime["status"],
         "resolutions": [item[1] for item in resolved],
@@ -382,6 +428,7 @@ def current_saved_settings() -> SavedSettings:
         sources=current_source_configs,
         export_channel_index=current_export_channel_index,
         export_frequency_hz=current_export_frequency_hz,
+        fft=current_fft_config,
     )
 
 
@@ -398,6 +445,7 @@ def save_current_settings() -> None:
 
 def restore_saved_settings() -> bool:
     global current_export_channel_index, current_export_frequency_hz
+    global current_fft_config
     if not SETTINGS_FILE.is_file():
         return False
     payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
@@ -418,6 +466,14 @@ def restore_saved_settings() -> bool:
         len(settings.sources) - 1,
     )
     current_export_frequency_hz = settings.export_frequency_hz
+    current_fft_config = settings.fft.model_copy(
+        update={
+            "channel_index": min(
+                settings.fft.channel_index,
+                len(settings.sources) - 1,
+            )
+        }
+    )
     return True
 
 
