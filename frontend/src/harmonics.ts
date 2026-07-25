@@ -13,6 +13,8 @@ export interface HarmonicAnalysis {
   effectiveHarmonics: number;
   requestedHarmonics: number;
   nonFiniteSamples: number;
+  appliedWindow: FftConfig["window"];
+  coherentCycles: number | null;
   config: FftConfig;
 }
 
@@ -42,10 +44,22 @@ export const calculateHarmonics = (
   });
   const dcAmplitude = values.length > 0 ? rawSum / values.length : 0;
 
+  const cycleCount =
+    (values.length * config.base_frequency_hz)
+      / config.sample_frequency_hz;
+  const nearestCycleCount = Math.round(cycleCount);
+  const coherentCycles =
+    nearestCycleCount >= 1
+    && Math.abs(cycleCount - nearestCycleCount) <= 1e-9
+      ? nearestCycleCount
+      : null;
+  const appliedWindow =
+    coherentCycles === null ? config.window : "rectangular";
+
   const weighted = new Float64Array(values.length);
   let windowSum = 0;
   cleaned.forEach((value, index) => {
-    const weight = windowWeight(config.window, index, values.length);
+    const weight = windowWeight(appliedWindow, index, values.length);
     weighted[index] = (value - dcAmplitude) * weight;
     windowSum += weight;
   });
@@ -93,6 +107,8 @@ export const calculateHarmonics = (
     effectiveHarmonics,
     requestedHarmonics: config.harmonic_count,
     nonFiniteSamples,
+    appliedWindow,
+    coherentCycles,
     config,
   };
 };

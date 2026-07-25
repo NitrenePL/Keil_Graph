@@ -83,6 +83,7 @@ npm run dev
 - 暂停自动刷新后，将指定通道按整数采样频率导出为无表头 CSV
 - 在时域图下方显示 H0 直流分量及最多 1000 次谐波的 Fourier 柱状图
 - Fourier 支持整数采样/基波频率、Rectangular/Hann/Hamming 和 RMS/Amp
+- 整数周期同步采样时自动使用 Rectangular，避免窗函数产生相邻谐波泄漏
 - 在同一张图中显示最多 8 条数组曲线
 - 每条曲线独立配置数组名称、元素数量、数据类型和地址
 - 在数据源配置中修改 Keil 安装目录或 UVSC DLL 路径

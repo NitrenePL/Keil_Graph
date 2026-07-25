@@ -544,11 +544,31 @@ const runFftAnalysis = (): void => {
     hann: "Hann",
     hamming: "Hamming",
   }[activeFftConfig.window];
+  const appliedWindowLabel = {
+    rectangular: "Rectangular",
+    hann: "Hann",
+    hamming: "Hamming",
+  }[fftAnalysis.appliedWindow];
+  const displayedWindow =
+    fftAnalysis.appliedWindow === activeFftConfig.window
+      ? windowLabel
+      : `${windowLabel} → ${appliedWindowLabel}`;
   fftDetail.textContent =
-    `${channel.array_name} · ${windowLabel} · `
+    `${channel.array_name} · ${displayedWindow} · `
       + `${activeFftConfig.amplitude === "rms" ? "RMS" : "Amp"}`;
 
   const warnings: string[] = [];
+  const notes: string[] = [];
+  if (
+    fftAnalysis.coherentCycles !== null
+    && fftAnalysis.appliedWindow !== activeFftConfig.window
+  ) {
+    notes.push(
+      `检测到 ${fftAnalysis.coherentCycles} 个完整周期，`
+        + `已自动使用 Rectangular，避免 ${windowLabel} `
+        + "造成相邻谐波泄漏",
+    );
+  }
   if (
     fftAnalysis.effectiveHarmonics
     < fftAnalysis.requestedHarmonics
@@ -564,7 +584,8 @@ const runFftAnalysis = (): void => {
     );
   }
   fftMessage.textContent =
-    warnings.join("；") || `${channel.values.length} 点谐波分析完成`;
+    [...warnings, ...notes].join("；")
+      || `${channel.values.length} 点谐波分析完成`;
   fftMessage.classList.toggle("error", warnings.length > 0);
 };
 
