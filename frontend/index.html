@@ -12,148 +12,96 @@
   <body>
     <div id="app">
       <header class="topbar">
-        <div>
+        <div class="brand">
           <p class="eyebrow">STM32 / UVSC MONITOR</p>
           <h1>Keil Array Viewer</h1>
         </div>
-        <div class="connection">
-          <span id="connection-dot" class="status-dot"></span>
-          <div>
-            <span id="connection-label">正在连接</span>
-            <small id="connection-detail">UVSOCK :35876</small>
+
+        <div class="top-actions">
+          <div class="connection">
+            <span id="connection-dot" class="status-dot"></span>
+            <div>
+              <span id="connection-label">正在连接</span>
+              <small id="connection-detail">UVSOCK :35876</small>
+            </div>
+          </div>
+
+          <div class="refresh-controls">
+            <label class="auto-control" for="auto-refresh">
+              <span>自动刷新</span>
+              <span class="switch">
+                <input id="auto-refresh" type="checkbox" checked />
+                <span class="slider"></span>
+              </span>
+            </label>
+
+            <label class="interval-control" for="interval-ms">
+              <input
+                id="interval-ms"
+                type="number"
+                min="50"
+                max="60000"
+                step="50"
+                value="500"
+                aria-label="刷新间隔"
+              />
+              <span>ms</span>
+            </label>
+
+            <button id="manual-refresh" class="refresh-button" type="button">
+              <span class="refresh-icon" aria-hidden="true">↻</span>
+              立即刷新
+            </button>
           </div>
         </div>
       </header>
 
       <main>
-        <section class="hero-grid">
-          <article class="metric primary">
-            <span>数组</span>
-            <strong>myLOGGER0Arr</strong>
-            <small id="array-meta">float32 · 400 points</small>
-          </article>
-          <article class="metric">
-            <span>最小值</span>
-            <strong id="min-value">—</strong>
-          </article>
-          <article class="metric">
-            <span>最大值</span>
-            <strong id="max-value">—</strong>
-          </article>
-          <article class="metric">
-            <span>平均值</span>
-            <strong id="mean-value">—</strong>
-          </article>
-        </section>
-
-        <section class="panel chart-panel">
-          <div class="panel-heading">
+        <section class="chart-panel">
+          <div class="chart-heading">
             <div>
-              <p class="eyebrow">LIVE WAVEFORM</p>
-              <h2>时域波形</h2>
+              <div class="title-line">
+                <h2>myLOGGER0Arr</h2>
+                <span id="trigger-badge" class="trigger-badge">等待数据</span>
+              </div>
+              <p class="subtitle">
+                <span id="array-meta">float32 · 400 points</span>
+                <span class="separator">/</span>
+                <span id="capture-time">—</span>
+              </p>
             </div>
-            <div class="capture-meta">
-              <span id="trigger-badge" class="trigger-badge">等待数据</span>
-              <span id="capture-time">—</span>
+
+            <div class="legend" aria-label="波形图例">
+              <span class="legend-line"></span>
+              <span>myLOGGER0Arr</span>
             </div>
           </div>
+
           <div id="waveform" class="waveform"></div>
-          <div class="chart-footer">
-            <span id="sequence">Snapshot —</span>
-            <span id="read-duration">Read — ms</span>
-            <span id="sample-window">Window 20.00 ms</span>
-          </div>
-        </section>
 
-        <section class="lower-grid">
-          <article class="panel controls-panel">
-            <div class="panel-heading compact">
-              <div>
-                <p class="eyebrow">ACQUISITION</p>
-                <h2>刷新控制</h2>
-              </div>
+          <footer class="chart-footer">
+            <div class="target-meta">
+              <span>
+                Target
+                <strong id="target-state">—</strong>
+              </span>
+              <span>
+                Address
+                <strong id="memory-address">0x200041E4</strong>
+              </span>
+              <span>
+                Port
+                <strong id="uvsock-port">35876</strong>
+              </span>
             </div>
 
-            <div class="control-row">
-              <label class="switch-label" for="auto-refresh">
-                <span>
-                  <strong>自动刷新</strong>
-                  <small>由 Python 后端定时读取</small>
-                </span>
-                <span class="switch">
-                  <input id="auto-refresh" type="checkbox" checked />
-                  <span class="slider"></span>
-                </span>
-              </label>
+            <div class="capture-stats">
+              <span id="sequence">Snapshot —</span>
+              <span id="read-duration">Read — ms</span>
             </div>
+          </footer>
 
-            <div class="input-grid">
-              <label>
-                刷新间隔
-                <span class="input-with-unit">
-                  <input
-                    id="interval-ms"
-                    type="number"
-                    min="50"
-                    max="60000"
-                    step="50"
-                    value="500"
-                  />
-                  <span>ms</span>
-                </span>
-              </label>
-              <label>
-                采样频率
-                <span class="input-with-unit">
-                  <input
-                    id="sample-rate"
-                    type="number"
-                    min="1"
-                    step="100"
-                    value="20000"
-                  />
-                  <span>Hz</span>
-                </span>
-              </label>
-            </div>
-
-            <div class="button-row">
-              <button id="apply-config" class="button secondary">
-                应用设置
-              </button>
-              <button id="manual-refresh" class="button primary">
-                立即刷新
-              </button>
-            </div>
-            <p id="control-message" class="control-message"></p>
-          </article>
-
-          <article class="panel details-panel">
-            <div class="panel-heading compact">
-              <div>
-                <p class="eyebrow">TARGET</p>
-                <h2>数据源</h2>
-              </div>
-            </div>
-            <dl>
-              <div>
-                <dt>目标状态</dt>
-                <dd id="target-state">—</dd>
-              </div>
-              <div>
-                <dt>内存地址</dt>
-                <dd id="memory-address">0x200041E4</dd>
-              </div>
-              <div>
-                <dt>UVSOCK 端口</dt>
-                <dd id="uvsock-port">35876</dd>
-              </div>
-              <div>
-                <dt>数据格式</dt>
-                <dd>Little-endian float32</dd>
-              </div>
-            </dl>
-          </article>
+          <p id="control-message" class="control-message"></p>
         </section>
       </main>
     </div>

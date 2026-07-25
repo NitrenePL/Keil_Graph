@@ -1,6 +1,6 @@
 :root {
-  color: #dbe7f3;
-  background: #071019;
+  color: #d9e2eb;
+  background: #111416;
   font-family:
     Inter, "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   font-synthesis: none;
@@ -16,9 +16,8 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    radial-gradient(circle at 12% 0%, rgba(20, 94, 103, 0.22), transparent 34%),
-    radial-gradient(circle at 88% 18%, rgba(28, 64, 103, 0.16), transparent 32%),
-    #071019;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 180px),
+    #111416;
 }
 
 button,
@@ -27,17 +26,22 @@ input {
 }
 
 #app {
-  width: min(1500px, calc(100% - 40px));
+  width: min(1720px, calc(100% - 40px));
   margin: 0 auto;
-  padding-bottom: 48px;
+  padding-bottom: 28px;
 }
 
 .topbar {
-  min-height: 118px;
+  min-height: 100px;
   display: flex;
+  gap: 24px;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(139, 163, 188, 0.16);
+  border-bottom: 1px solid rgba(175, 187, 198, 0.14);
+}
+
+.brand {
+  flex: 0 0 auto;
 }
 
 h1,
@@ -48,35 +52,48 @@ p {
 
 h1 {
   margin-top: 3px;
-  color: #f3f8fc;
-  font-size: clamp(1.7rem, 3vw, 2.35rem);
-  font-weight: 650;
+  color: #f4f6f8;
+  font-size: clamp(1.55rem, 2.2vw, 2rem);
+  font-weight: 640;
   letter-spacing: -0.035em;
 }
 
 h2 {
-  color: #eff6fb;
+  color: #f4f6f8;
+  font-family: "Cascadia Code", Consolas, monospace;
   font-size: 1.15rem;
   font-weight: 600;
 }
 
 .eyebrow {
-  color: #4adcb0;
+  color: #ff9a28;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 0.68rem;
+  font-size: 0.65rem;
   font-weight: 700;
   letter-spacing: 0.16em;
 }
 
-.connection {
+.top-actions {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  min-width: 190px;
-  padding: 11px 15px;
-  border: 1px solid rgba(139, 163, 188, 0.16);
-  border-radius: 12px;
-  background: rgba(12, 25, 37, 0.72);
+  justify-content: flex-end;
+}
+
+.connection,
+.refresh-controls {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  border: 1px solid rgba(175, 187, 198, 0.16);
+  border-radius: 8px;
+  background: rgba(24, 28, 31, 0.88);
+}
+
+.connection {
+  min-width: 172px;
+  gap: 10px;
+  padding: 8px 13px;
 }
 
 .connection > div {
@@ -86,201 +103,54 @@ h2 {
 }
 
 .connection span:not(.status-dot) {
-  color: #e9f1f8;
-  font-size: 0.86rem;
+  color: #e8edf1;
+  font-size: 0.78rem;
   font-weight: 600;
 }
 
 .connection small {
   overflow: hidden;
-  margin-top: 2px;
-  color: #7890a6;
-  font-size: 0.71rem;
+  max-width: 190px;
+  margin-top: 1px;
+  color: #7e8a96;
+  font-size: 0.65rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .status-dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #d86565;
-  box-shadow: 0 0 0 4px rgba(216, 101, 101, 0.1);
+  background: #da6666;
+  box-shadow: 0 0 0 4px rgba(218, 102, 102, 0.1);
 }
 
 .status-dot.connected {
-  background: #36d29e;
-  box-shadow: 0 0 0 4px rgba(54, 210, 158, 0.1);
+  background: #43d49d;
+  box-shadow: 0 0 0 4px rgba(67, 212, 157, 0.1);
 }
 
-main {
-  display: grid;
-  gap: 18px;
-  padding-top: 22px;
-}
-
-.hero-grid {
-  display: grid;
-  grid-template-columns: 1.55fr repeat(3, 1fr);
-  gap: 12px;
-}
-
-.metric,
-.panel {
-  border: 1px solid rgba(132, 154, 177, 0.14);
-  background:
-    linear-gradient(145deg, rgba(17, 33, 47, 0.94), rgba(10, 22, 33, 0.96));
-  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.16);
-}
-
-.metric {
-  min-height: 104px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 18px 20px;
-  border-radius: 13px;
-}
-
-.metric span {
-  color: #7f96ac;
-  font-size: 0.72rem;
-}
-
-.metric strong {
-  margin-top: 7px;
-  color: #f1f7fb;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: clamp(1.1rem, 2vw, 1.55rem);
-  font-weight: 520;
-}
-
-.metric small {
-  margin-top: 5px;
-  color: #61798f;
-  font-size: 0.69rem;
-}
-
-.metric.primary {
-  border-color: rgba(43, 206, 159, 0.26);
-  background:
-    linear-gradient(135deg, rgba(20, 62, 65, 0.74), rgba(10, 26, 37, 0.96));
-}
-
-.panel {
-  border-radius: 15px;
-}
-
-.chart-panel {
-  padding: 21px 24px 15px;
-}
-
-.panel-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.panel-heading.compact {
-  margin-bottom: 22px;
-}
-
-.panel-heading h2 {
-  margin-top: 4px;
-}
-
-.capture-meta {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  color: #70899f;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 0.72rem;
-}
-
-.trigger-badge {
-  padding: 5px 8px;
-  border: 1px solid rgba(61, 212, 166, 0.24);
-  border-radius: 6px;
-  color: #52dcb3;
-  background: rgba(33, 169, 129, 0.09);
-}
-
-.trigger-badge.manual {
-  border-color: rgba(85, 158, 232, 0.3);
-  color: #78b7f4;
-  background: rgba(65, 130, 198, 0.1);
-}
-
-.waveform {
-  height: 410px;
+.refresh-controls {
   overflow: hidden;
 }
 
-.uplot {
-  font-family: "Cascadia Code", Consolas, monospace;
-}
-
-.u-legend {
-  display: none;
-}
-
-.chart-footer {
+.auto-control {
   display: flex;
-  gap: 22px;
-  justify-content: flex-end;
-  padding-top: 10px;
-  color: #647c92;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 0.68rem;
-}
-
-.lower-grid {
-  display: grid;
-  grid-template-columns: 1.45fr 1fr;
-  gap: 18px;
-}
-
-.controls-panel,
-.details-panel {
-  padding: 22px 24px;
-}
-
-.control-row {
-  padding-bottom: 18px;
-  border-bottom: 1px solid rgba(132, 154, 177, 0.12);
-}
-
-.switch-label {
-  display: flex;
+  gap: 9px;
   align-items: center;
-  justify-content: space-between;
-}
-
-.switch-label > span:first-child {
-  display: flex;
-  flex-direction: column;
-}
-
-.switch-label strong,
-.input-grid label {
-  color: #d8e4ed;
-  font-size: 0.84rem;
-  font-weight: 550;
-}
-
-.switch-label small {
-  margin-top: 3px;
-  color: #637b91;
-  font-size: 0.7rem;
+  height: 46px;
+  padding: 0 13px;
+  border-right: 1px solid rgba(175, 187, 198, 0.14);
+  color: #aeb9c3;
+  font-size: 0.72rem;
 }
 
 .switch {
   position: relative;
-  width: 42px;
-  height: 23px;
+  width: 34px;
+  height: 19px;
 }
 
 .switch input {
@@ -294,204 +164,314 @@ main {
   inset: 0;
   cursor: pointer;
   border-radius: 20px;
-  background: #263a4b;
-  transition: 160ms ease;
+  background: #374047;
+  transition: 150ms ease;
 }
 
 .slider::before {
   position: absolute;
-  width: 17px;
-  height: 17px;
+  width: 13px;
+  height: 13px;
   top: 3px;
   left: 3px;
   border-radius: 50%;
-  background: #aec0cf;
+  background: #b4bec6;
   content: "";
-  transition: 160ms ease;
+  transition: 150ms ease;
 }
 
 .switch input:checked + .slider {
-  background: #198663;
+  background: #b8600b;
 }
 
 .switch input:checked + .slider::before {
-  background: #e9fff8;
-  transform: translateX(19px);
+  background: #fff3e5;
+  transform: translateX(15px);
 }
 
-.input-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 13px;
-  margin-top: 18px;
-}
-
-.input-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.input-with-unit {
-  display: flex;
-  overflow: hidden;
-  border: 1px solid rgba(132, 154, 177, 0.2);
-  border-radius: 9px;
-  background: rgba(5, 15, 24, 0.55);
-}
-
-.input-with-unit input {
-  width: 100%;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 0;
-  outline: none;
-  color: #e6f0f7;
-  background: transparent;
-  font-family: "Cascadia Code", Consolas, monospace;
-}
-
-.input-with-unit span {
+.interval-control {
+  height: 46px;
   display: flex;
   align-items: center;
-  padding: 0 11px;
-  border-left: 1px solid rgba(132, 154, 177, 0.15);
-  color: #607b91;
-  font-size: 0.7rem;
+  border-right: 1px solid rgba(175, 187, 198, 0.14);
 }
 
-.button-row {
-  display: flex;
-  gap: 10px;
-  margin-top: 18px;
-}
-
-.button {
-  min-height: 40px;
-  padding: 0 17px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  font-size: 0.8rem;
-  font-weight: 620;
-  transition:
-    transform 120ms ease,
-    border-color 120ms ease,
-    background 120ms ease;
-}
-
-.button:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.button:disabled {
-  cursor: wait;
-  opacity: 0.55;
-}
-
-.button.primary {
-  color: #05261c;
-  background: #35d5a3;
-}
-
-.button.secondary {
-  border-color: rgba(132, 154, 177, 0.22);
-  color: #cbd9e4;
-  background: #172a3a;
-}
-
-.control-message {
-  min-height: 18px;
-  margin-top: 12px;
-  color: #5fcdaa;
-  font-size: 0.72rem;
-}
-
-.control-message.error {
-  color: #ec7d7d;
-}
-
-.details-panel dl {
-  margin: 0;
-}
-
-.details-panel dl div {
-  display: flex;
-  justify-content: space-between;
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(132, 154, 177, 0.1);
-}
-
-.details-panel dl div:first-child {
-  padding-top: 0;
-}
-
-.details-panel dl div:last-child {
-  border-bottom: 0;
-}
-
-.details-panel dt {
-  color: #70899f;
-  font-size: 0.75rem;
-}
-
-.details-panel dd {
-  margin: 0;
-  color: #d7e4ed;
+.interval-control input {
+  width: 77px;
+  height: 100%;
+  padding: 0 7px 0 12px;
+  border: 0;
+  outline: 0;
+  color: #eef2f5;
+  background: transparent;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.76rem;
 }
 
-@media (max-width: 850px) {
-  #app {
-    width: min(100% - 24px, 720px);
-  }
-
-  .topbar {
-    min-height: 100px;
-  }
-
-  .hero-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .lower-grid {
-    grid-template-columns: 1fr;
-  }
+.interval-control span {
+  padding-right: 11px;
+  color: #707d87;
+  font-size: 0.66rem;
 }
 
-@media (max-width: 560px) {
+.refresh-button {
+  height: 46px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0 14px;
+  cursor: pointer;
+  border: 0;
+  color: #1b1208;
+  background: #ff9418;
+  font-size: 0.73rem;
+  font-weight: 650;
+  transition:
+    background 120ms ease,
+    transform 120ms ease;
+}
+
+.refresh-button:hover:not(:disabled) {
+  background: #ffa43b;
+}
+
+.refresh-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.refresh-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+main {
+  padding-top: 18px;
+}
+
+.chart-panel {
+  min-height: calc(100vh - 146px);
+  display: flex;
+  flex-direction: column;
+  padding: 22px 24px 12px;
+  border: 1px solid rgba(175, 187, 198, 0.15);
+  border-radius: 10px;
+  background: #191d20;
+  box-shadow: 0 20px 55px rgba(0, 0, 0, 0.22);
+}
+
+.chart-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 14px;
+}
+
+.title-line {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.subtitle {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  color: #788590;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.67rem;
+}
+
+.separator {
+  color: #424b52;
+}
+
+.trigger-badge {
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 148, 24, 0.3);
+  border-radius: 4px;
+  color: #ff9f32;
+  background: rgba(255, 148, 24, 0.07);
+  font-size: 0.63rem;
+}
+
+.trigger-badge.manual {
+  border-color: rgba(80, 171, 229, 0.32);
+  color: #72bced;
+  background: rgba(80, 171, 229, 0.08);
+}
+
+.legend {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: #a3adb5;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+.legend-line {
+  position: relative;
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: #ff9418;
+}
+
+.legend-line::after {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  top: -2px;
+  left: 14px;
+  border-radius: 50%;
+  background: #ff9418;
+  content: "";
+}
+
+.waveform {
+  min-height: 500px;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-top: 1px solid rgba(175, 187, 198, 0.08);
+  border-bottom: 1px solid rgba(175, 187, 198, 0.08);
+}
+
+.uplot {
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.u-legend {
+  display: none;
+}
+
+.u-cursor-x,
+.u-cursor-y {
+  border-color: rgba(237, 241, 244, 0.55) !important;
+  border-style: dashed !important;
+}
+
+.point-tooltip {
+  position: absolute;
+  z-index: 10;
+  min-width: 150px;
+  padding: 7px 9px;
+  pointer-events: none;
+  border: 1px solid rgba(255, 148, 24, 0.48);
+  border-radius: 5px;
+  color: #fff3e5;
+  background: rgba(13, 15, 17, 0.94);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.chart-footer {
+  min-height: 42px;
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 0;
+  color: #68747e;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.64rem;
+}
+
+.target-meta,
+.capture-stats {
+  display: flex;
+  gap: 18px;
+}
+
+.chart-footer strong {
+  margin-left: 5px;
+  color: #b7c0c8;
+  font-weight: 500;
+}
+
+.capture-stats {
+  color: #8b969f;
+}
+
+.control-message {
+  min-height: 16px;
+  padding: 2px 8px 0;
+  color: #d47b22;
+  font-size: 0.66rem;
+  text-align: right;
+}
+
+.control-message.error {
+  color: #e87979;
+}
+
+@media (max-width: 980px) {
+  #app {
+    width: min(100% - 24px, 900px);
+  }
+
   .topbar {
     align-items: flex-start;
     flex-direction: column;
-    gap: 14px;
-    padding: 22px 0;
+    padding: 18px 0;
+  }
+
+  .top-actions {
+    width: 100%;
+  }
+
+  .refresh-controls {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+
+  .chart-panel {
+    min-height: calc(100vh - 190px);
+  }
+}
+
+@media (max-width: 680px) {
+  .top-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .connection {
     width: 100%;
   }
 
-  .hero-grid,
-  .input-grid {
-    grid-template-columns: 1fr;
+  .refresh-controls {
+    width: 100%;
   }
 
-  .chart-panel,
-  .controls-panel,
-  .details-panel {
-    padding-right: 16px;
-    padding-left: 16px;
+  .auto-control {
+    flex: 1 1 auto;
   }
 
-  .capture-meta,
+  .chart-panel {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .chart-heading,
   .chart-footer {
-    align-items: flex-end;
+    align-items: flex-start;
     flex-direction: column;
-    gap: 5px;
+    gap: 10px;
   }
 
-  .button-row {
-    flex-direction: column;
+  .target-meta {
+    flex-wrap: wrap;
+    gap: 8px 14px;
+  }
+
+  .waveform {
+    min-height: 420px;
   }
 }

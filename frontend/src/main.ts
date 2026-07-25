@@ -24,12 +24,6 @@ interface Snapshot {
   count: number;
   read_duration_ms: number;
   values: number[];
-  stats: {
-    min: number | null;
-    max: number | null;
-    mean: number | null;
-    non_finite: number;
-  };
 }
 
 interface SocketEvent {
@@ -48,46 +42,98 @@ const connectionLabel = byId<HTMLSpanElement>("connection-label");
 const connectionDetail = byId<HTMLElement>("connection-detail");
 const autoRefresh = byId<HTMLInputElement>("auto-refresh");
 const intervalInput = byId<HTMLInputElement>("interval-ms");
-const sampleRateInput = byId<HTMLInputElement>("sample-rate");
-const applyButton = byId<HTMLButtonElement>("apply-config");
 const manualButton = byId<HTMLButtonElement>("manual-refresh");
 const controlMessage = byId<HTMLParagraphElement>("control-message");
 
 let latestSnapshot: Snapshot | null = null;
 let reconnectTimer: number | undefined;
+let configTimer: number | undefined;
+
+const pointTooltip = document.createElement("div");
+pointTooltip.className = "point-tooltip";
+pointTooltip.hidden = true;
+
+const updateCursor = (plot: uPlot): void => {
+  const index = plot.cursor.idx;
+  const left = plot.cursor.left;
+  const top = plot.cursor.top;
+  const values = latestSnapshot?.values;
+
+  if (
+    index === null ||
+    index === undefined ||
+    left === null ||
+    left === undefined ||
+    top === null ||
+    top === undefined ||
+    !values ||
+    index < 0 ||
+    index >= values.length
+  ) {
+    pointTooltip.hidden = true;
+    return;
+  }
+
+  const value = values[index];
+  pointTooltip.textContent = `(${index}, ${value.toFixed(7)})`;
+  pointTooltip.hidden = false;
+
+  const tooltipWidth = pointTooltip.offsetWidth || 155;
+  const tooltipHeight = pointTooltip.offsetHeight || 32;
+  const maxLeft = Math.max(plot.over.clientWidth - tooltipWidth - 8, 8);
+  const maxTop = Math.max(plot.over.clientHeight - tooltipHeight - 8, 8);
+  pointTooltip.style.left = `${Math.min(left + 14, maxLeft)}px`;
+  pointTooltip.style.top = `${Math.min(top + 14, maxTop)}px`;
+};
 
 const plot = new uPlot(
   {
-    width: 960,
-    height: 410,
+    width: 1200,
+    height: 620,
     cursor: {
       drag: { x: true, y: false },
+      points: {
+        size: 8,
+        width: 2,
+        stroke: "#ff9f32",
+        fill: "#0b151f",
+      },
+    },
+    hooks: {
+      ready: [
+        (instance) => {
+          instance.over.appendChild(pointTooltip);
+        },
+      ],
+      setCursor: [updateCursor],
     },
     scales: {
-      x: { time: false },
+      x: { time: false, range: [0, 399] },
       y: { auto: true },
     },
     axes: [
       {
-        stroke: "#718096",
-        grid: { stroke: "rgba(132, 150, 171, 0.12)" },
-        label: "时间 (ms)",
-        labelSize: 28,
+        stroke: "#8190a0",
+        grid: { stroke: "rgba(161, 175, 190, 0.2)", width: 1 },
+        ticks: { stroke: "rgba(161, 175, 190, 0.28)", width: 1 },
+        label: "Index",
+        labelSize: 32,
       },
       {
-        stroke: "#718096",
-        grid: { stroke: "rgba(132, 150, 171, 0.12)" },
-        label: "幅值",
-        labelSize: 38,
-        size: 58,
+        stroke: "#8190a0",
+        grid: { stroke: "rgba(161, 175, 190, 0.2)", width: 1 },
+        ticks: { stroke: "rgba(161, 175, 190, 0.28)", width: 1 },
+        label: "Value",
+        labelSize: 42,
+        size: 64,
       },
     ],
     series: [
       {},
       {
         label: "myLOGGER0Arr",
-        stroke: "#24d6a0",
-        width: 2,
+        stroke: "#ff9418",
+        width: 3,
         points: { show: false },
       },
     ],
@@ -100,14 +146,11 @@ const resizePlot = (): void => {
   const container = byId<HTMLDivElement>("waveform");
   plot.setSize({
     width: Math.max(container.clientWidth, 320),
-    height: Math.max(container.clientHeight, 300),
+    height: Math.max(container.clientHeight, 360),
   });
 };
 
 new ResizeObserver(resizePlot).observe(byId("waveform"));
-
-const formatValue = (value: number | null): string =>
-  value === null ? "—" : value.toFixed(6);
 
 const setMessage = (message: string, error = false): void => {
   controlMessage.textContent = message;
@@ -123,19 +166,16 @@ const updateStatus = (status: ViewerStatus): void => {
   byId("array-meta").textContent = `${status.dtype} · ${status.count} points`;
   byId("target-state").textContent =
     status.target_state === "running"
-      ? "运行中"
+      ? "Running"
       : status.target_state === "stopped"
-        ? "已停止"
-        : "未知";
+        ? "Stopped"
+        : "Unknown";
   byId("memory-address").textContent = status.address_hex;
   byId("uvsock-port").textContent = String(status.port);
 };
 
 const updateSnapshot = (snapshot: Snapshot): void => {
   latestSnapshot = snapshot;
-  byId("min-value").textContent = formatValue(snapshot.stats.min);
-  byId("max-value").textContent = formatValue(snapshot.stats.max);
-  byId("mean-value").textContent = formatValue(snapshot.stats.mean);
   byId("sequence").textContent = `Snapshot #${snapshot.sequence}`;
   byId("read-duration").textContent =
     `Read ${snapshot.read_duration_ms.toFixed(1)} ms`;
@@ -145,15 +185,14 @@ const updateSnapshot = (snapshot: Snapshot): void => {
     hour12: false,
     fractionalSecondDigits: 3,
   });
+
   const badge = byId("trigger-badge");
   badge.textContent = snapshot.trigger === "manual" ? "手动刷新" : "自动刷新";
   badge.classList.toggle("manual", snapshot.trigger === "manual");
 
-  const sampleRate = Math.max(Number(sampleRateInput.value) || 20_000, 1);
-  const xValues = snapshot.values.map((_, index) => (index / sampleRate) * 1000);
-  plot.setData([xValues, snapshot.values]);
-  const windowMs = (snapshot.values.length / sampleRate) * 1000;
-  byId("sample-window").textContent = `Window ${windowMs.toFixed(2)} ms`;
+  const indices = snapshot.values.map((_, index) => index);
+  plot.setScale("x", { min: 0, max: Math.max(snapshot.values.length - 1, 1) });
+  plot.setData([indices, snapshot.values]);
 };
 
 const requestJson = async <T>(
@@ -175,7 +214,7 @@ const loadInitialState = async (): Promise<void> => {
   try {
     updateSnapshot(await requestJson<Snapshot>("/api/snapshot"));
   } catch {
-    // The worker may still be connecting; WebSocket will deliver the first sample.
+    // The first WebSocket snapshot arrives after UVSC is connected.
   }
 };
 
@@ -204,29 +243,42 @@ const connectSocket = (): void => {
   });
 };
 
-applyButton.addEventListener("click", async () => {
-  applyButton.disabled = true;
-  setMessage("正在应用设置…");
+const applyRefreshConfig = async (): Promise<void> => {
+  const interval = Number(intervalInput.value);
+  setMessage("正在更新刷新设置…");
   try {
     const status = await requestJson<ViewerStatus>("/api/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         auto_refresh: autoRefresh.checked,
-        interval_ms: Number(intervalInput.value),
+        interval_ms: interval,
       }),
     });
     updateStatus(status);
     setMessage(
       status.auto_refresh
-        ? `自动刷新：${status.interval_ms} ms`
+        ? `自动刷新 ${status.interval_ms} ms`
         : "自动刷新已关闭",
     );
   } catch (error) {
     setMessage((error as Error).message, true);
-  } finally {
-    applyButton.disabled = false;
   }
+};
+
+autoRefresh.addEventListener("change", () => {
+  void applyRefreshConfig();
+});
+
+intervalInput.addEventListener("change", () => {
+  void applyRefreshConfig();
+});
+
+intervalInput.addEventListener("input", () => {
+  if (configTimer !== undefined) window.clearTimeout(configTimer);
+  configTimer = window.setTimeout(() => {
+    if (intervalInput.checkValidity()) void applyRefreshConfig();
+  }, 700);
 });
 
 manualButton.addEventListener("click", async () => {
@@ -243,10 +295,6 @@ manualButton.addEventListener("click", async () => {
   } finally {
     manualButton.disabled = false;
   }
-});
-
-sampleRateInput.addEventListener("change", () => {
-  if (latestSnapshot) updateSnapshot(latestSnapshot);
 });
 
 void loadInitialState().catch((error: Error) => {
