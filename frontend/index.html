@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="通过 Keil UVSC 实时查看 STM32 数组波形"
+    />
+    <title>Keil Array Viewer</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">STM32 / UVSC MONITOR</p>
+          <h1>Keil Array Viewer</h1>
+        </div>
+        <div class="connection">
+          <span id="connection-dot" class="status-dot"></span>
+          <div>
+            <span id="connection-label">正在连接</span>
+            <small id="connection-detail">UVSOCK :35876</small>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-grid">
+          <article class="metric primary">
+            <span>数组</span>
+            <strong>myLOGGER0Arr</strong>
+            <small id="array-meta">float32 · 400 points</small>
+          </article>
+          <article class="metric">
+            <span>最小值</span>
+            <strong id="min-value">—</strong>
+          </article>
+          <article class="metric">
+            <span>最大值</span>
+            <strong id="max-value">—</strong>
+          </article>
+          <article class="metric">
+            <span>平均值</span>
+            <strong id="mean-value">—</strong>
+          </article>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">LIVE WAVEFORM</p>
+              <h2>时域波形</h2>
+            </div>
+            <div class="capture-meta">
+              <span id="trigger-badge" class="trigger-badge">等待数据</span>
+              <span id="capture-time">—</span>
+            </div>
+          </div>
+          <div id="waveform" class="waveform"></div>
+          <div class="chart-footer">
+            <span id="sequence">Snapshot —</span>
+            <span id="read-duration">Read — ms</span>
+            <span id="sample-window">Window 20.00 ms</span>
+          </div>
+        </section>
+
+        <section class="lower-grid">
+          <article class="panel controls-panel">
+            <div class="panel-heading compact">
+              <div>
+                <p class="eyebrow">ACQUISITION</p>
+                <h2>刷新控制</h2>
+              </div>
+            </div>
+
+            <div class="control-row">
+              <label class="switch-label" for="auto-refresh">
+                <span>
+                  <strong>自动刷新</strong>
+                  <small>由 Python 后端定时读取</small>
+                </span>
+                <span class="switch">
+                  <input id="auto-refresh" type="checkbox" checked />
+                  <span class="slider"></span>
+                </span>
+              </label>
+            </div>
+
+            <div class="input-grid">
+              <label>
+                刷新间隔
+                <span class="input-with-unit">
+                  <input
+                    id="interval-ms"
+                    type="number"
+                    min="50"
+                    max="60000"
+                    step="50"
+                    value="500"
+                  />
+                  <span>ms</span>
+                </span>
+              </label>
+              <label>
+                采样频率
+                <span class="input-with-unit">
+                  <input
+                    id="sample-rate"
+                    type="number"
+                    min="1"
+                    step="100"
+                    value="20000"
+                  />
+                  <span>Hz</span>
+                </span>
+              </label>
+            </div>
+
+            <div class="button-row">
+              <button id="apply-config" class="button secondary">
+                应用设置
+              </button>
+              <button id="manual-refresh" class="button primary">
+                立即刷新
+              </button>
+            </div>
+            <p id="control-message" class="control-message"></p>
+          </article>
+
+          <article class="panel details-panel">
+            <div class="panel-heading compact">
+              <div>
+                <p class="eyebrow">TARGET</p>
+                <h2>数据源</h2>
+              </div>
+            </div>
+            <dl>
+              <div>
+                <dt>目标状态</dt>
+                <dd id="target-state">—</dd>
+              </div>
+              <div>
+                <dt>内存地址</dt>
+                <dd id="memory-address">0x200041E4</dd>
+              </div>
+              <div>
+                <dt>UVSOCK 端口</dt>
+                <dd id="uvsock-port">35876</dd>
+              </div>
+              <div>
+                <dt>数据格式</dt>
+                <dd>Little-endian float32</dd>
+              </div>
+            </dl>
+          </article>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
