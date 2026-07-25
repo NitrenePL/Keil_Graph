@@ -75,7 +75,16 @@ def default_dll_candidates(workspace: Path) -> list[Path]:
 
 
 def resolve_dll(explicit_path: Path | None, workspace: Path) -> Path:
-    candidates = [explicit_path] if explicit_path else default_dll_candidates(workspace)
+    dll_name = "UVSC64.dll" if ctypes.sizeof(ctypes.c_void_p) == 8 else "UVSC.dll"
+    if explicit_path is None:
+        candidates = default_dll_candidates(workspace)
+    elif explicit_path.suffix.lower() == ".dll":
+        candidates = [explicit_path]
+    else:
+        candidates = [
+            explicit_path / "UV4" / dll_name,
+            explicit_path / dll_name,
+        ]
     for candidate in candidates:
         if candidate is not None and candidate.is_file():
             return candidate.resolve()

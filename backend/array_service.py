@@ -36,7 +36,6 @@ class UvscArrayService:
         count: int = DEFAULT_COUNT,
         array_name: str = "myLOGGER0Arr",
         data_type: str = "float32",
-        sample_rate_hz: float = 20_000,
         interval_ms: int = 500,
         auto_refresh: bool = True,
         dll_path: Path | None = None,
@@ -50,7 +49,6 @@ class UvscArrayService:
             address=address,
             count=count,
             data_type=data_type,
-            sample_rate_hz=sample_rate_hz,
         )
         self._validate_sources((initial_source,))
 
@@ -61,6 +59,7 @@ class UvscArrayService:
         self._thread: threading.Thread | None = None
         self._listener: EventListener | None = None
         self._client: UvscClient | None = None
+        self._reconnect_requested = False
         self._sequence = 0
         self._latest: dict[str, Any] | None = None
         self._sources = (initial_source,)
@@ -99,6 +98,9 @@ class UvscArrayService:
                 "connected": self._connected,
                 "target_state": self._target_state,
                 "port": self.port,
+                "keil_path": (
+                    None if self.dll_path is None else str(self.dll_path)
+                ),
                 "sources": [source.as_status() for source in self._sources],
                 # Keep the first source at the top level for older clients.
                 **first.as_status(),
@@ -145,6 +147,47 @@ class UvscArrayService:
         self._emit({"type": "status", "data": status})
         return status
 
+    def configure_dll_path(self, path: Path) -> dict[str, Any]:
+        normalized = path.expanduser().resolve()
+        resolved_dll = resolve_dll(normalized, self.workspace)
+        with self._lock:
+            changed = normalized != self.dll_path
+            self.dll_path = normalized
+            if changed:
+                self._reconnect_requested = True
+            status = self.get_status()
+        self._wake_event.set()
+        self._emit({"type": "status", "data": status})
+        return {
+            "status": status,
+            "dll_path": str(resolved_dll),
+        }
+
+    def configure_sources_and_dll(
+        self,
+        sources: Iterable[ArraySource],
+        dll_path: Path,
+    ) -> dict[str, Any]:
+        source_tuple = tuple(sources)
+        self._validate_sources(source_tuple)
+        normalized = dll_path.expanduser().resolve()
+        resolved_dll = resolve_dll(normalized, self.workspace)
+        with self._lock:
+            path_changed = normalized != self.dll_path
+            self.dll_path = normalized
+            self._sources = source_tuple
+            self._latest = None
+            self._last_error = None
+            if path_changed:
+                self._reconnect_requested = True
+            status = self.get_status()
+        self._wake_event.set()
+        self._emit({"type": "status", "data": status})
+        return {
+            "status": status,
+            "dll_path": str(resolved_dll),
+        }
+
     def configure_source(
         self,
         *,
@@ -152,7 +195,6 @@ class UvscArrayService:
         address: int,
         count: int,
         data_type: str,
-        sample_rate_hz: float,
     ) -> dict[str, Any]:
         """Backward-compatible single-source configuration."""
         return self.configure_sources(
@@ -162,7 +204,6 @@ class UvscArrayService:
                     address=address,
                     count=count,
                     data_type=data_type,
-                    sample_rate_hz=sample_rate_hz,
                 ),
             )
         )
@@ -210,8 +251,6 @@ class UvscArrayService:
                     f"{name} 单次读取不能超过 {MAX_READ_BYTES} 字节，"
                     f"当前配置为 {byte_count} 字节"
                 )
-            if not 0 < source.sample_rate_hz <= 100_000_000:
-                raise ValueError(f"{name} 的采样频率必须在 0～100 MHz 之间")
 
     def _run(self) -> None:
         next_refresh = time.monotonic()
@@ -219,6 +258,13 @@ class UvscArrayService:
         try:
             while not self._stop_event.is_set():
                 now = time.monotonic()
+                with self._lock:
+                    reconnect_requested = self._reconnect_requested
+                    self._reconnect_requested = False
+                if reconnect_requested:
+                    self._disconnect()
+                    retry_at = now
+
                 if self._client is None and now >= retry_at:
                     try:
                         self._connect()
@@ -257,7 +303,9 @@ class UvscArrayService:
             self._disconnect()
 
     def _connect(self) -> None:
-        dll_path = resolve_dll(self.dll_path, self.workspace)
+        with self._lock:
+            configured_path = self.dll_path
+        dll_path = resolve_dll(configured_path, self.workspace)
         client = UvscClient(dll_path)
         try:
             client.initialize()
@@ -367,7 +415,6 @@ class UvscArrayService:
                 "address": first["address"],
                 "count": first["count"],
                 "dtype": first["dtype"],
-                "sample_rate_hz": first["sample_rate_hz"],
                 "values": first["values"],
                 "stats": first["stats"],
             }

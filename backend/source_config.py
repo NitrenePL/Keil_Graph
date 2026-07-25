@@ -35,7 +35,6 @@ class ArraySource:
     address: int
     count: int
     data_type: str
-    sample_rate_hz: float
 
     def as_status(self) -> dict[str, object]:
         return {
@@ -44,7 +43,6 @@ class ArraySource:
             "address_hex": f"0x{self.address:08X}",
             "count": self.count,
             "dtype": self.data_type,
-            "sample_rate_hz": self.sample_rate_hz,
         }
 
 

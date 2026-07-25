@@ -128,6 +128,18 @@
           </header>
 
           <div class="source-fields">
+            <label class="keil-path-field">
+              Keil 安装目录或 UVSC DLL
+              <input
+                id="keil-path"
+                type="text"
+                required
+                maxlength="4096"
+                placeholder="E:\Keil\Keil_v5"
+                autocomplete="off"
+              />
+            </label>
+
             <label class="map-file-field">
               MAP 文件路径
               <input
@@ -220,21 +232,6 @@
                 <option value="int32">int32</option>
                 <option value="uint32">uint32</option>
               </select>
-            </label>
-
-            <label>
-              采样频率
-              <span class="field-with-unit">
-                <input
-                  data-field="sample-rate"
-                  type="number"
-                  min="0.001"
-                  max="100000000"
-                  step="1"
-                  required
-                />
-                <span>Hz</span>
-              </span>
             </label>
 
             <label class="source-address-field">

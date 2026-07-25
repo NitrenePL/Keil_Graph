@@ -20,6 +20,7 @@ from backend.array_service import (
     UvscArrayService,
 )
 from backend.source_config import ArraySource, DATA_TYPES, MapSymbolResolver
+from uvsc_smoke_test import UvscError
 
 
 WORKSPACE = Path(__file__).resolve().parents[1]
@@ -53,12 +54,12 @@ class SourceUpdate(BaseModel):
     array_name: str = Field(min_length=1, max_length=256)
     count: int = Field(ge=1)
     dtype: str
-    sample_rate_hz: float = Field(gt=0, le=100_000_000)
     address: int | str | None = None
 
 
 class SourcesUpdate(BaseModel):
     map_file: str | None = Field(default=None, max_length=4096)
+    keil_path: str | None = Field(default=None, max_length=4096)
     sources: list[SourceUpdate] = Field(
         min_length=1,
         max_length=MAX_SOURCES,
@@ -96,6 +97,9 @@ class WebSocketHub:
 
 hub = WebSocketHub()
 current_map_file = DEFAULT_MAP_FILE
+current_keil_path = Path(
+    os.getenv("UVSC_KEIL_PATH", r"E:\Keil\Keil_v5")
+).expanduser().resolve()
 service = UvscArrayService(
     workspace=WORKSPACE,
     port=env_int("UVSC_PORT", 35876),
@@ -103,9 +107,9 @@ service = UvscArrayService(
     count=env_int("UVSC_ARRAY_COUNT", 400),
     array_name=os.getenv("UVSC_ARRAY_NAME", "myLOGGER0Arr"),
     data_type=os.getenv("UVSC_ARRAY_DTYPE", "float32"),
-    sample_rate_hz=float(os.getenv("UVSC_SAMPLE_RATE_HZ", "20000")),
     interval_ms=env_int("UVSC_INTERVAL_MS", 500),
     auto_refresh=os.getenv("UVSC_AUTO_REFRESH", "1") != "0",
+    dll_path=current_keil_path,
 )
 
 
@@ -180,6 +184,7 @@ async def get_source_options() -> dict[str, Any]:
     return {
         "data_types": list(DATA_TYPES),
         "map_file": str(current_map_file),
+        "keil_path": str(current_keil_path),
         "max_sources": MAX_SOURCES,
     }
 
@@ -211,7 +216,6 @@ def resolve_source(
         address=address,
         count=config.count,
         data_type=config.dtype,
-        sample_rate_hz=config.sample_rate_hz,
     )
     resolution = {
         "array_name": source.name,
@@ -225,7 +229,7 @@ def resolve_source(
 
 @app.put("/api/sources")
 async def update_sources(config: SourcesUpdate) -> dict[str, Any]:
-    global current_map_file
+    global current_keil_path, current_map_file
     try:
         map_file_text = (config.map_file or str(current_map_file)).strip()
         if not map_file_text:
@@ -233,17 +237,27 @@ async def update_sources(config: SourcesUpdate) -> dict[str, Any]:
         map_file = Path(map_file_text).expanduser().resolve()
         symbol_resolver = MapSymbolResolver(map_file)
         symbol_resolver.validate()
+        keil_path_text = (config.keil_path or str(current_keil_path)).strip()
+        if not keil_path_text:
+            raise ValueError("Keil 安装目录不能为空")
+        keil_path = Path(keil_path_text).expanduser().resolve()
         resolved = [
             resolve_source(item, symbol_resolver) for item in config.sources
         ]
-        status = service.configure_sources(item[0] for item in resolved)
+        runtime = service.configure_sources_and_dll(
+            (item[0] for item in resolved),
+            keil_path,
+        )
         current_map_file = map_file
+        current_keil_path = keil_path
         return {
-            "status": status,
+            "status": runtime["status"],
             "resolutions": [item[1] for item in resolved],
             "map_file": str(current_map_file),
+            "keil_path": str(current_keil_path),
+            "dll_path": runtime["dll_path"],
         }
-    except ValueError as exc:
+    except (ValueError, UvscError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

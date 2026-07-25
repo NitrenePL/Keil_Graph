@@ -8,7 +8,6 @@ interface SourceStatus {
   address_hex: string;
   count: number;
   dtype: string;
-  sample_rate_hz: number;
 }
 
 interface ViewerStatus extends SourceStatus {
@@ -43,12 +42,15 @@ interface SocketEvent {
 interface SourceOptions {
   data_types: string[];
   map_file: string;
+  keil_path: string;
   max_sources: number;
 }
 
 interface SourcesUpdateResponse {
   status: ViewerStatus;
   map_file: string;
+  keil_path: string;
+  dll_path: string;
   resolutions: Array<{
     array_name: string;
     address_hex: string;
@@ -61,7 +63,6 @@ interface SourceInput {
   array_name: string;
   count: number;
   dtype: string;
-  sample_rate_hz: number;
   address: string | null;
 }
 
@@ -104,6 +105,7 @@ const addSourceButton = byId<HTMLButtonElement>("add-source");
 const sourceError = byId<HTMLParagraphElement>("source-error");
 const mapFileNote = byId<HTMLParagraphElement>("map-file-note");
 const mapFileInput = byId<HTMLInputElement>("map-file");
+const keilPathInput = byId<HTMLInputElement>("keil-path");
 
 let latestSnapshot: Snapshot | null = null;
 let latestStatus: ViewerStatus | null = null;
@@ -127,7 +129,6 @@ const normalizedSources = (status: ViewerStatus): SourceStatus[] =>
           address_hex: status.address_hex,
           count: status.count,
           dtype: status.dtype,
-          sample_rate_hz: status.sample_rate_hz,
         },
       ];
 
@@ -280,11 +281,6 @@ const setMessage = (message: string, error = false): void => {
   controlMessage.textContent = message;
   controlMessage.classList.toggle("error", error);
 };
-
-const formatRate = (sampleRate: number): string =>
-  sampleRate >= 1000
-    ? `${(sampleRate / 1000).toFixed(3).replace(/\.?0+$/, "")} kHz`
-    : `${sampleRate} Hz`;
 
 const updateStatus = (status: ViewerStatus): void => {
   latestStatus = status;
@@ -473,9 +469,6 @@ const addSourceRow = (source?: SourceStatus): void => {
   field<HTMLInputElement>("name").value = source?.array_name ?? "";
   field<HTMLInputElement>("count").value = String(source?.count ?? 400);
   field<HTMLSelectElement>("dtype").value = source?.dtype ?? "float32";
-  field<HTMLInputElement>("sample-rate").value = String(
-    source?.sample_rate_hz ?? 20_000,
-  );
   const address = field<HTMLInputElement>("address");
   address.value = "";
   address.placeholder = source
@@ -509,7 +502,6 @@ const collectSourceRows = (): SourceInput[] =>
         array_name: value("name").trim(),
         count: Number(value("count")),
         dtype: value("dtype"),
-        sample_rate_hz: Number(value("sample-rate")),
         address: address || null,
       };
     },
@@ -522,6 +514,7 @@ const closeSourceDialog = (): void => {
 
 sourceConfigButton.addEventListener("click", () => {
   mapFileInput.value = sourceOptions?.map_file ?? "";
+  keilPathInput.value = sourceOptions?.keil_path ?? "";
   if (latestStatus) {
     renderSourceRows(normalizedSources(latestStatus));
   } else {
@@ -548,10 +541,14 @@ sourceForm.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         map_file: mapFileInput.value.trim(),
+        keil_path: keilPathInput.value.trim(),
         sources: collectSourceRows(),
       }),
     });
-    if (sourceOptions) sourceOptions.map_file = response.map_file;
+    if (sourceOptions) {
+      sourceOptions.map_file = response.map_file;
+      sourceOptions.keil_path = response.keil_path;
+    }
     updateStatus(response.status);
     const snapshot = await requestJson<Snapshot>("/api/refresh", {
       method: "POST",

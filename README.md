@@ -73,12 +73,12 @@ npm run dev
 - `50～60000 ms` 刷新间隔设置
 - 手动立即刷新
 - 在同一张图中显示最多 8 条数组曲线
-- 每条曲线独立配置数组名称、元素数量、数据类型、采样频率和地址
+- 每条曲线独立配置数组名称、元素数量、数据类型和地址
+- 在数据源配置中修改 Keil 安装目录或 UVSC DLL 路径
 - 在数据源配置中修改 MAP 文件路径
 - 根据 Arm linker MAP 文件分别自动解析全局数组地址
 - WebSocket 实时推送
 - 400 点时域波形
-- 可配置采样频率，用于计算横轴时间
 - 最小值、最大值、平均值和读取耗时
 
 默认参数可通过环境变量修改：
@@ -89,7 +89,7 @@ $env:UVSC_ARRAY_ADDRESS = "0x200041E4"
 $env:UVSC_ARRAY_COUNT = "400"
 $env:UVSC_ARRAY_NAME = "myLOGGER0Arr"
 $env:UVSC_ARRAY_DTYPE = "float32"
-$env:UVSC_SAMPLE_RATE_HZ = "20000"
+$env:UVSC_KEIL_PATH = "E:\Keil\Keil_v5"
 $env:UVSC_MAP_FILE = "D:\path\to\application.map"
 $env:UVSC_INTERVAL_MS = "500"
 $env:UVSC_AUTO_REFRESH = "1"
