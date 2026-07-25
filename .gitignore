@@ -1,0 +1,28 @@
+# Python virtual environments and bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python tool caches and test output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# Downloaded Keil UVSOCK SDK/distribution
+apnt_198/
+
+# IDE and operating-system metadata
+.idea/
+.vs/
+Thumbs.db
+Desktop.ini
