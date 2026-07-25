@@ -8,8 +8,8 @@
       content="通过 Keil UVSC 实时查看 STM32 数组波形"
     />
     <title>Keil Array Viewer</title>
-    <script type="module" crossorigin src="/assets/index-Cc1Tx0EZ.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BID-roBq.css">
+    <script type="module" crossorigin src="/assets/index-DjTLlInj.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DcD5pJjt.css">
   </head>
   <body>
     <div id="app">
@@ -130,6 +130,22 @@
           </header>
 
           <div class="source-fields">
+            <label class="map-file-field">
+              MAP 文件路径
+              <input
+                id="map-file"
+                type="text"
+                required
+                maxlength="4096"
+                placeholder="D:\path\to\application.map"
+                autocomplete="off"
+              />
+            </label>
+
+            <p id="map-file-note" class="map-file-note">
+              留空的数组地址将从此 MAP 文件解析
+            </p>
+
             <div class="source-list-heading">
               <div>
                 <strong>曲线列表</strong>
@@ -142,7 +158,6 @@
 
             <div id="source-list" class="source-list"></div>
 
-            <p id="map-file-note" class="map-file-note">MAP：正在读取…</p>
             <p id="source-error" class="source-error"></p>
           </div>
 

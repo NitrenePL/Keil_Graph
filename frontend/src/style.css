@@ -504,6 +504,10 @@ main {
   justify-content: space-between;
 }
 
+.map-file-field input {
+  font-size: 0.7rem;
+}
+
 .source-list-heading > div {
   display: flex;
   flex-direction: column;

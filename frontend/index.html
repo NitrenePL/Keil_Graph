@@ -128,6 +128,22 @@
           </header>
 
           <div class="source-fields">
+            <label class="map-file-field">
+              MAP 文件路径
+              <input
+                id="map-file"
+                type="text"
+                required
+                maxlength="4096"
+                placeholder="D:\path\to\application.map"
+                autocomplete="off"
+              />
+            </label>
+
+            <p id="map-file-note" class="map-file-note">
+              留空的数组地址将从此 MAP 文件解析
+            </p>
+
             <div class="source-list-heading">
               <div>
                 <strong>曲线列表</strong>
@@ -140,7 +156,6 @@
 
             <div id="source-list" class="source-list"></div>
 
-            <p id="map-file-note" class="map-file-note">MAP：正在读取…</p>
             <p id="source-error" class="source-error"></p>
           </div>
 

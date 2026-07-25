@@ -48,6 +48,7 @@ interface SourceOptions {
 
 interface SourcesUpdateResponse {
   status: ViewerStatus;
+  map_file: string;
   resolutions: Array<{
     array_name: string;
     address_hex: string;
@@ -102,6 +103,7 @@ const sourceTemplate = byId<HTMLTemplateElement>("source-row-template");
 const addSourceButton = byId<HTMLButtonElement>("add-source");
 const sourceError = byId<HTMLParagraphElement>("source-error");
 const mapFileNote = byId<HTMLParagraphElement>("map-file-note");
+const mapFileInput = byId<HTMLInputElement>("map-file");
 
 let latestSnapshot: Snapshot | null = null;
 let latestStatus: ViewerStatus | null = null;
@@ -358,7 +360,7 @@ const loadInitialState = async (): Promise<void> => {
   sourceOptions = options;
   updateStatus(status);
   mapFileNote.textContent =
-    `MAP：${options.map_file} · 最多 ${options.max_sources} 条曲线`;
+    `留空的数组地址将从此 MAP 文件解析 · 最多 ${options.max_sources} 条曲线`;
   try {
     updateSnapshot(await requestJson<Snapshot>("/api/snapshot"));
   } catch {
@@ -519,6 +521,7 @@ const closeSourceDialog = (): void => {
 };
 
 sourceConfigButton.addEventListener("click", () => {
+  mapFileInput.value = sourceOptions?.map_file ?? "";
   if (latestStatus) {
     renderSourceRows(normalizedSources(latestStatus));
   } else {
@@ -543,8 +546,12 @@ sourceForm.addEventListener("submit", async (event) => {
     const response = await requestJson<SourcesUpdateResponse>("/api/sources", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources: collectSourceRows() }),
+      body: JSON.stringify({
+        map_file: mapFileInput.value.trim(),
+        sources: collectSourceRows(),
+      }),
     });
+    if (sourceOptions) sourceOptions.map_file = response.map_file;
     updateStatus(response.status);
     const snapshot = await requestJson<Snapshot>("/api/refresh", {
       method: "POST",

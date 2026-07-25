@@ -68,12 +68,15 @@ class MapSymbolResolver:
     def __init__(self, map_file: Path) -> None:
         self.map_file = map_file
 
+    def validate(self) -> None:
+        if not self.map_file.is_file():
+            raise ValueError(f"找不到 MAP 文件：{self.map_file}")
+
     def resolve(self, symbol_name: str) -> MapSymbol:
         normalized = symbol_name.strip()
         if not normalized:
             raise ValueError("数组名称不能为空")
-        if not self.map_file.is_file():
-            raise ValueError(f"找不到 MAP 文件：{self.map_file}")
+        self.validate()
 
         with self.map_file.open("r", encoding="utf-8", errors="replace") as file:
             for line in file:

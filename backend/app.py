@@ -58,6 +58,7 @@ class SourceUpdate(BaseModel):
 
 
 class SourcesUpdate(BaseModel):
+    map_file: str | None = Field(default=None, max_length=4096)
     sources: list[SourceUpdate] = Field(
         min_length=1,
         max_length=MAX_SOURCES,
@@ -94,7 +95,7 @@ class WebSocketHub:
 
 
 hub = WebSocketHub()
-symbol_resolver = MapSymbolResolver(DEFAULT_MAP_FILE)
+current_map_file = DEFAULT_MAP_FILE
 service = UvscArrayService(
     workspace=WORKSPACE,
     port=env_int("UVSC_PORT", 35876),
@@ -178,12 +179,15 @@ def parse_address(value: int | str | None) -> int | None:
 async def get_source_options() -> dict[str, Any]:
     return {
         "data_types": list(DATA_TYPES),
-        "map_file": str(DEFAULT_MAP_FILE),
+        "map_file": str(current_map_file),
         "max_sources": MAX_SOURCES,
     }
 
 
-def resolve_source(config: SourceUpdate) -> tuple[ArraySource, dict[str, Any]]:
+def resolve_source(
+    config: SourceUpdate,
+    symbol_resolver: MapSymbolResolver,
+) -> tuple[ArraySource, dict[str, Any]]:
     data_type = DATA_TYPES.get(config.dtype)
     if data_type is None:
         raise ValueError(f"不支持的数据类型：{config.dtype}")
@@ -221,12 +225,23 @@ def resolve_source(config: SourceUpdate) -> tuple[ArraySource, dict[str, Any]]:
 
 @app.put("/api/sources")
 async def update_sources(config: SourcesUpdate) -> dict[str, Any]:
+    global current_map_file
     try:
-        resolved = [resolve_source(item) for item in config.sources]
+        map_file_text = (config.map_file or str(current_map_file)).strip()
+        if not map_file_text:
+            raise ValueError("MAP 文件路径不能为空")
+        map_file = Path(map_file_text).expanduser().resolve()
+        symbol_resolver = MapSymbolResolver(map_file)
+        symbol_resolver.validate()
+        resolved = [
+            resolve_source(item, symbol_resolver) for item in config.sources
+        ]
         status = service.configure_sources(item[0] for item in resolved)
+        current_map_file = map_file
         return {
             "status": status,
             "resolutions": [item[1] for item in resolved],
+            "map_file": str(current_map_file),
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
