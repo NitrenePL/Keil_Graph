@@ -8,14 +8,14 @@
       content="通过 Keil UVSC 实时查看 STM32 数组波形"
     />
     <title>Keil Array Viewer</title>
-    <script type="module" crossorigin src="/assets/index-BYZr3_W-.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BNEkrsf2.css">
+    <script type="module" crossorigin src="/assets/index-Oxt6RqLk.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-RP9gtRly.css">
   </head>
   <body>
     <div id="app">
       <header class="topbar">
         <div class="brand">
-          <p class="eyebrow">STM32 / UVSC MONITOR</p>
+          <p class="eyebrow">MCU MONITOR</p>
           <h1>Keil Array Viewer</h1>
         </div>
 
@@ -106,6 +106,26 @@
                 <span>每通道</span>
               </header>
               <div id="scale-controls" class="scale-controls"></div>
+
+              <section
+                id="pinned-cursor-panel"
+                class="pinned-cursor-panel"
+                aria-labelledby="pinned-cursor-title"
+              >
+                <header class="pinned-cursor-heading">
+                  <strong id="pinned-cursor-title">固定游标</strong>
+                  <button id="pinned-cursor-clear" type="button" disabled>
+                    清除全部
+                  </button>
+                </header>
+                <p class="pinned-cursor-help">
+                  在曲线图上左键单击，可固定两条纵线
+                </p>
+                <div id="pinned-cursor-cards" class="pinned-cursor-cards"></div>
+                <p id="pinned-cursor-delta" class="pinned-cursor-delta">
+                  ΔX —
+                </p>
+              </section>
             </aside>
             <div id="waveform" class="waveform"></div>
           </div>

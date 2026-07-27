@@ -8,6 +8,17 @@ import {
 } from "./harmonics";
 
 type ScaleOperator = "multiply" | "divide";
+type PinnedCursorKey = "x1" | "x2";
+
+interface PinnedCursorElements {
+  x1: HTMLDivElement;
+  x2: HTMLDivElement;
+}
+
+interface PinnedCursorState {
+  x1: number | null;
+  x2: number | null;
+}
 
 interface SourceStatus {
   array_name: string;
@@ -132,6 +143,12 @@ const manualButton = byId<HTMLButtonElement>("manual-refresh");
 const controlMessage = byId<HTMLParagraphElement>("control-message");
 const waveform = byId<HTMLDivElement>("waveform");
 const scaleControls = byId<HTMLDivElement>("scale-controls");
+const pinnedCursorCards =
+  byId<HTMLDivElement>("pinned-cursor-cards");
+const pinnedCursorClear =
+  byId<HTMLButtonElement>("pinned-cursor-clear");
+const pinnedCursorDelta =
+  byId<HTMLParagraphElement>("pinned-cursor-delta");
 const measurementRows = byId<HTMLDivElement>("measurement-rows");
 const legend = document.querySelector<HTMLDivElement>(".legend");
 
@@ -179,6 +196,11 @@ let reconnectTimer: number | undefined;
 let configTimer: number | undefined;
 let plot: uPlot | null = null;
 let plottedSignature = "";
+let pinnedCursorElements: PinnedCursorElements | null = null;
+const pinnedCursorState: PinnedCursorState = {
+  x1: null,
+  x2: null,
+};
 let fftPlot: uPlot | null = null;
 let fftAnalysis: HarmonicAnalysis | null = null;
 let fftAnalysisTimer: number | undefined;
@@ -286,6 +308,210 @@ const updateCursor = (instance: uPlot): void => {
   }
   renderTooltip(instance, index, latestSnapshot.series);
 };
+
+const formatPinnedCursorValue = (value: number): string => {
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1_000_000 || (magnitude > 0 && magnitude < 0.0001)) {
+    return value.toExponential(6);
+  }
+  return value.toFixed(7);
+};
+
+const renderPinnedCursorCards = (): void => {
+  pinnedCursorCards.replaceChildren();
+  const keys: PinnedCursorKey[] = ["x1", "x2"];
+  let cursorCount = 0;
+
+  keys.forEach((key) => {
+    const index = pinnedCursorState[key];
+    if (index === null) return;
+    cursorCount += 1;
+
+    const card = document.createElement("article");
+    card.className = `pinned-cursor-card ${key}`;
+
+    const header = document.createElement("header");
+    const title = document.createElement("strong");
+    const tag = document.createElement("span");
+    tag.className = "pinned-cursor-card-tag";
+    tag.textContent = key.toUpperCase();
+    const indexLabel = document.createElement("span");
+    indexLabel.textContent = `Index ${index}`;
+    title.append(tag, indexLabel);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "pinned-cursor-remove";
+    remove.textContent = "删除";
+    remove.setAttribute("aria-label", `删除 ${key.toUpperCase()} 游标`);
+    remove.addEventListener("click", () => {
+      pinnedCursorState[key] = null;
+      renderPinnedCursorCards();
+      updatePinnedCursorPositions();
+    });
+    header.append(title, remove);
+    card.appendChild(header);
+
+    latestSnapshot?.series.forEach((series, seriesIndex) => {
+      const row = document.createElement("div");
+      row.className = "pinned-cursor-channel";
+      const dot = document.createElement("i");
+      dot.style.backgroundColor = COLORS[seriesIndex % COLORS.length];
+      const name = document.createElement("span");
+      name.className = "pinned-cursor-channel-name";
+      name.textContent = sourceDisplayName(series);
+      const value = document.createElement("strong");
+      value.className = "pinned-cursor-channel-value";
+      const sample = series.values[index];
+      value.textContent =
+        sample === undefined ? "—" : formatPinnedCursorValue(sample);
+      row.append(dot, name, value);
+      card.appendChild(row);
+    });
+    pinnedCursorCards.appendChild(card);
+  });
+
+  if (cursorCount === 0) {
+    const empty = document.createElement("p");
+    empty.className = "pinned-cursor-empty";
+    empty.textContent = latestSnapshot
+      ? "左键单击曲线图固定 X1"
+      : "等待波形数据";
+    pinnedCursorCards.appendChild(empty);
+  }
+
+  pinnedCursorClear.disabled = cursorCount === 0;
+  pinnedCursorDelta.textContent =
+    pinnedCursorState.x1 === null || pinnedCursorState.x2 === null
+      ? "ΔX —"
+      : `ΔX ${pinnedCursorState.x2 - pinnedCursorState.x1} pts`;
+};
+
+const updatePinnedCursorPositions = (instance: uPlot = plot!): void => {
+  if (!instance || !pinnedCursorElements) return;
+  const scale = instance.scales.x;
+
+  (["x1", "x2"] as PinnedCursorKey[]).forEach((key) => {
+    const element = pinnedCursorElements![key];
+    const index = pinnedCursorState[key];
+    if (
+      index === null
+      || scale.min === null
+      || scale.min === undefined
+      || scale.max === null
+      || scale.max === undefined
+    ) {
+      element.hidden = true;
+      return;
+    }
+
+    const position = instance.valToPos(index, "x");
+    const visible =
+      Number.isFinite(position)
+      && position >= 0
+      && position <= instance.over.clientWidth;
+    element.hidden = !visible;
+    if (visible) element.style.left = `${position}px`;
+  });
+};
+
+const createPinnedCursorElement = (
+  key: PinnedCursorKey,
+): HTMLDivElement => {
+  const element = document.createElement("div");
+  element.className =
+    `pinned-cursor-line pinned-cursor-line-${key}`;
+  element.hidden = true;
+  const tag = document.createElement("span");
+  tag.className = "pinned-cursor-line-tag";
+  tag.textContent = key.toUpperCase();
+  element.appendChild(tag);
+  return element;
+};
+
+const addPinnedCursor = (index: number): void => {
+  if (
+    pinnedCursorState.x1 === index
+    || pinnedCursorState.x2 === index
+  ) {
+    setMessage(`Index ${index} 已固定`);
+    return;
+  }
+
+  const emptyKey = (["x1", "x2"] as PinnedCursorKey[]).find(
+    (key) => pinnedCursorState[key] === null,
+  );
+  if (!emptyKey) {
+    setMessage("最多固定两条纵线，请先删除一条或清除全部", true);
+    return;
+  }
+
+  pinnedCursorState[emptyKey] = index;
+  renderPinnedCursorCards();
+  updatePinnedCursorPositions();
+  setMessage(`${emptyKey.toUpperCase()} 已固定在 Index ${index}`);
+};
+
+const mountPinnedCursors = (instance: uPlot): void => {
+  pinnedCursorElements = {
+    x1: createPinnedCursorElement("x1"),
+    x2: createPinnedCursorElement("x2"),
+  };
+  instance.over.append(
+    pinnedCursorElements.x1,
+    pinnedCursorElements.x2,
+  );
+
+  let pointerStart:
+    { pointerId: number; clientX: number; clientY: number }
+    | null = null;
+  instance.over.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !latestSnapshot) return;
+    pointerStart = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+  });
+  instance.over.addEventListener("pointerup", (event) => {
+    if (!pointerStart || pointerStart.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(
+      event.clientX - pointerStart.clientX,
+      event.clientY - pointerStart.clientY,
+    );
+    pointerStart = null;
+    if (distance > 4 || !latestSnapshot) return;
+
+    const bounds = instance.over.getBoundingClientRect();
+    const position = Math.max(
+      0,
+      Math.min(bounds.width, event.clientX - bounds.left),
+    );
+    const maxIndex = Math.max(
+      0,
+      ...latestSnapshot.series.map((series) => series.values.length - 1),
+    );
+    const index = Math.max(
+      0,
+      Math.min(maxIndex, Math.round(instance.posToVal(position, "x"))),
+    );
+    addPinnedCursor(index);
+  });
+  instance.over.addEventListener("pointercancel", () => {
+    pointerStart = null;
+  });
+  updatePinnedCursorPositions(instance);
+};
+
+const clearPinnedCursors = (): void => {
+  pinnedCursorState.x1 = null;
+  pinnedCursorState.x2 = null;
+  renderPinnedCursorCards();
+  updatePinnedCursorPositions();
+};
+
+pinnedCursorClear.addEventListener("click", clearPinnedCursors);
+renderPinnedCursorCards();
 
 const renderLegend = (sources: SourceStatus[]): void => {
   if (!legend) return;
@@ -482,6 +708,7 @@ const renderMeasurements = (series: SeriesSnapshot[]): void => {
 
 const createPlot = (sources: SourceStatus[]): void => {
   plot?.destroy();
+  pinnedCursorElements = null;
   waveform.replaceChildren();
   pointTooltip.hidden = true;
 
@@ -490,7 +717,14 @@ const createPlot = (sources: SourceStatus[]): void => {
       width: 1200,
       height: 620,
       cursor: {
-        drag: { x: true, y: false },
+        bind: {
+          dblclick: () => null,
+        },
+        drag: {
+          x: false,
+          y: false,
+          setScale: false,
+        },
         points: {
           size: 8,
           width: 2,
@@ -501,8 +735,10 @@ const createPlot = (sources: SourceStatus[]): void => {
         ready: [
           (instance) => {
             instance.over.appendChild(pointTooltip);
+            mountPinnedCursors(instance);
           },
         ],
+        draw: [updatePinnedCursorPositions],
         setCursor: [updateCursor],
       },
       scales: {
@@ -833,6 +1069,7 @@ const clearSnapshotView = (sources: SourceStatus[]): void => {
   latestSnapshot = null;
   pointTooltip.hidden = true;
   plot?.setData([[], ...sources.map(() => [])]);
+  clearPinnedCursors();
   measurementRows.replaceChildren();
   byId("sequence").textContent = "Snapshot —";
   byId("read-duration").textContent = "Read — ms";
@@ -941,6 +1178,12 @@ const updateSnapshot = (snapshot: Snapshot): void => {
     ...Array<number | null>(maxCount - source.values.length).fill(null),
   ]);
   plot?.setData([indices, ...alignedSeries]);
+  (["x1", "x2"] as PinnedCursorKey[]).forEach((key) => {
+    const index = pinnedCursorState[key];
+    if (index !== null && index >= maxCount) pinnedCursorState[key] = null;
+  });
+  renderPinnedCursorCards();
+  updatePinnedCursorPositions();
   renderMeasurements(sources);
   updateExportAvailability();
   updateFftChannelOptions(snapshot);
