@@ -47,6 +47,28 @@ Python 服务直接提供，只需要启动一个进程。
 该文件包含本机路径，已被 Git 忽略。可通过 `VIEWER_CONFIG_FILE`
 指定其他保存位置。
 
+## 虚拟串口数组发送模拟器
+
+在接入单片机串口前，可先使用虚拟串口对（例如 COM30 ↔ COM31）验证数组
+传输。发送端运行在 COM30，后续网页服务的串口接收端将连接 COM31：
+
+```powershell
+.\.venv\Scripts\python.exe -B .\serial_array_simulator.py --port COM30
+```
+
+默认每秒发送一帧：3 个 `float32[400]` 通道。帧为小端二进制 `KAV1` 格式：
+`magic(4) + version(1) + channel_count(1) + sample_count(2) + sequence(4) +
+captured_at_ms(8) + payload_bytes(4) + float32 payload + crc32(4)`。
+
+默认帧长为 `4828 B`。串口使用 8N1 时每字节在线传输需要 10 bit，因此
+`115200 baud` 理论传输时间约 `419 ms`，1 秒发送一次时链路占用约 42%；
+有充足余量。若以后提高刷新频率，可改用 `230400` 或更高波特率：
+
+```powershell
+.\.venv\Scripts\python.exe -B .\serial_array_simulator.py `
+  --port COM30 --baudrate 230400 --interval 0.2
+```
+
 ## 前端开发
 
 前端开发依赖安装在项目自己的 `frontend/node_modules` 中，Node
