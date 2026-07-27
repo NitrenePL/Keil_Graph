@@ -94,6 +94,23 @@
 
           <div id="waveform" class="waveform"></div>
 
+          <section class="channel-measurements" aria-labelledby="measurement-title">
+            <header class="measurement-heading">
+              <strong id="measurement-title">通道测量</strong>
+              <span>当前快照</span>
+            </header>
+            <div class="measurement-table" role="table" aria-label="通道测量统计">
+              <div class="measurement-row measurement-header" role="row">
+                <span role="columnheader">通道</span>
+                <span role="columnheader">平均值</span>
+                <span role="columnheader">最大值</span>
+                <span role="columnheader">最小值</span>
+                <span role="columnheader">有效值</span>
+              </div>
+              <div id="measurement-rows" class="measurement-rows"></div>
+            </div>
+          </section>
+
           <footer class="chart-footer">
             <div class="target-meta">
               <span>

@@ -8,8 +8,8 @@
       content="通过 Keil UVSC 实时查看 STM32 数组波形"
     />
     <title>Keil Array Viewer</title>
-    <script type="module" crossorigin src="/assets/index-BNcVJBfd.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Btv9RlTg.css">
+    <script type="module" crossorigin src="/assets/index-C6Xv8xuK.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-NXoaxsaB.css">
   </head>
   <body>
     <div id="app">
@@ -95,6 +95,23 @@
           </div>
 
           <div id="waveform" class="waveform"></div>
+
+          <section class="channel-measurements" aria-labelledby="measurement-title">
+            <header class="measurement-heading">
+              <strong id="measurement-title">通道测量</strong>
+              <span>当前快照</span>
+            </header>
+            <div class="measurement-table" role="table" aria-label="通道测量统计">
+              <div class="measurement-row measurement-header" role="row">
+                <span role="columnheader">通道</span>
+                <span role="columnheader">平均值</span>
+                <span role="columnheader">最大值</span>
+                <span role="columnheader">最小值</span>
+                <span role="columnheader">有效值</span>
+              </div>
+              <div id="measurement-rows" class="measurement-rows"></div>
+            </div>
+          </section>
 
           <footer class="chart-footer">
             <div class="target-meta">

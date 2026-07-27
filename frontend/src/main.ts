@@ -101,6 +101,7 @@ const intervalInput = byId<HTMLInputElement>("interval-ms");
 const manualButton = byId<HTMLButtonElement>("manual-refresh");
 const controlMessage = byId<HTMLParagraphElement>("control-message");
 const waveform = byId<HTMLDivElement>("waveform");
+const measurementRows = byId<HTMLDivElement>("measurement-rows");
 const legend = document.querySelector<HTMLDivElement>(".legend");
 
 const sourceConfigButton = byId<HTMLButtonElement>("source-config-button");
@@ -245,6 +246,88 @@ const renderLegend = (sources: SourceStatus[]): void => {
     label.textContent = source.array_name;
     item.append(line, label);
     legend.appendChild(item);
+  });
+};
+
+interface ChannelMeasurement {
+  average: number;
+  maximum: number;
+  minimum: number;
+  rms: number;
+}
+
+const calculateMeasurement = (
+  values: number[],
+): ChannelMeasurement | null => {
+  let count = 0;
+  let sum = 0;
+  let squareSum = 0;
+  let maximum = Number.NEGATIVE_INFINITY;
+  let minimum = Number.POSITIVE_INFINITY;
+
+  values.forEach((value) => {
+    if (!Number.isFinite(value)) return;
+    count += 1;
+    sum += value;
+    squareSum += value * value;
+    maximum = Math.max(maximum, value);
+    minimum = Math.min(minimum, value);
+  });
+
+  if (count === 0) return null;
+  return {
+    average: sum / count,
+    maximum,
+    minimum,
+    rms: Math.sqrt(squareSum / count),
+  };
+};
+
+const formatMeasurement = (value: number): string => {
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1_000_000 || (magnitude > 0 && magnitude < 0.0001)) {
+    return value.toExponential(5);
+  }
+  return value
+    .toFixed(6)
+    .replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1");
+};
+
+const renderMeasurements = (series: SeriesSnapshot[]): void => {
+  measurementRows.replaceChildren();
+
+  series.forEach((channel, index) => {
+    const measurement = calculateMeasurement(channel.values);
+    const row = document.createElement("div");
+    row.className = "measurement-row";
+    row.setAttribute("role", "row");
+
+    const name = document.createElement("span");
+    name.className = "measurement-channel";
+    name.setAttribute("role", "cell");
+    const dot = document.createElement("i");
+    dot.style.backgroundColor = COLORS[index % COLORS.length];
+    const label = document.createElement("span");
+    label.textContent = channel.array_name;
+    name.append(dot, label);
+    row.appendChild(name);
+
+    const values = measurement
+      ? [
+          measurement.average,
+          measurement.maximum,
+          measurement.minimum,
+          measurement.rms,
+        ].map(formatMeasurement)
+      : ["—", "—", "—", "—"];
+
+    values.forEach((value) => {
+      const cell = document.createElement("span");
+      cell.setAttribute("role", "cell");
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+    measurementRows.appendChild(row);
   });
 };
 
@@ -688,6 +771,7 @@ const updateSnapshot = (snapshot: Snapshot): void => {
     ...Array<number | null>(maxCount - source.values.length).fill(null),
   ]);
   plot?.setData([indices, ...alignedSeries]);
+  renderMeasurements(sources);
   updateExportAvailability();
   updateFftChannelOptions(snapshot);
   scheduleFftAnalysis();
