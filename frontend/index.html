@@ -267,6 +267,25 @@
           </header>
 
           <div class="source-fields">
+            <label>
+              数据来源
+              <select id="data-source">
+                <option value="uvsc">Keil / UVSC 调试器内存</option>
+                <option value="serial">串口 KAV1 数组帧</option>
+              </select>
+            </label>
+
+            <div id="serial-fields" class="field-grid" hidden>
+              <label>
+                接收串口
+                <input id="serial-port" type="text" maxlength="256" placeholder="COM31" autocomplete="off" />
+              </label>
+              <label>
+                波特率
+                <input id="serial-baudrate" type="number" min="300" max="12000000" step="1" value="115200" />
+              </label>
+            </div>
+
             <label class="keil-path-field">
               Keil 安装目录或 UVSC DLL
               <input
@@ -298,7 +317,7 @@
             <div class="source-list-heading">
               <div>
                 <strong>曲线列表</strong>
-                <small>同一刷新周期内依次读取并绘制</small>
+                <small id="source-list-description">同一刷新周期内依次读取并绘制</small>
               </div>
               <button id="add-source" class="add-source-button" type="button">
                 ＋ 添加曲线
@@ -445,7 +464,7 @@
             </label>
 
             <label class="source-address-field">
-              起始地址（可选）
+              <span class="source-address-label">起始地址（可选）</span>
               <input
                 data-field="address"
                 type="text"

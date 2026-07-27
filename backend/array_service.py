@@ -113,6 +113,7 @@ class UvscArrayService:
                 "connected": self._connected,
                 "target_state": self._target_state,
                 "port": self.port,
+                "data_source": "uvsc",
                 "keil_path": (
                     None if self.dll_path is None else str(self.dll_path)
                 ),

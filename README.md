@@ -49,6 +49,8 @@ Python 服务直接提供，只需要启动一个进程。
 
 ## 虚拟串口数组发送模拟器
 
+完整的二进制帧定义见 [KAV1 协议文档](docs/KAV1_PROTOCOL.md)。
+
 在接入单片机串口前，可先使用虚拟串口对（例如 COM30 ↔ COM31）验证数组
 传输。发送端运行在 COM30，后续网页服务的串口接收端将连接 COM31：
 
@@ -58,16 +60,23 @@ Python 服务直接提供，只需要启动一个进程。
 
 默认每秒发送一帧：3 个 `float32[400]` 通道。帧为小端二进制 `KAV1` 格式：
 `magic(4) + version(1) + channel_count(1) + sample_count(2) + sequence(4) +
-captured_at_ms(8) + payload_bytes(4) + float32 payload + crc32(4)`。
+payload_bytes(4) + float32 payload + crc32(4)`。
 
-默认帧长为 `4828 B`。串口使用 8N1 时每字节在线传输需要 10 bit，因此
-`115200 baud` 理论传输时间约 `419 ms`，1 秒发送一次时链路占用约 42%；
+默认帧长为 `4820 B`。串口使用 8N1 时每字节在线传输需要 10 bit，因此
+`115200 baud` 理论传输时间约 `418 ms`，1 秒发送一次时链路占用约 42%；
 有充足余量。若以后提高刷新频率，可改用 `230400` 或更高波特率：
 
 ```powershell
 .\.venv\Scripts\python.exe -B .\serial_array_simulator.py `
   --port COM30 --baudrate 230400 --interval 0.2
 ```
+
+网页右上角选择“数据源”后，可在“数据来源”中切换：
+
+- `Keil / UVSC 调试器内存`：配置 Keil/DLL、MAP 和数组地址，行为与原有版本一致。
+- `串口 KAV1 数组帧`：配置接收端（默认 `COM31`）及波特率；MAP 和 Keil 字段不再需要。
+  每条曲线的“串口通道号”对应 KAV1 帧内从 0 开始的通道序号，当前协议只支持
+  `float32`。保存后服务将等待串口帧，连接状态会显示串口名称与波特率。
 
 ## 前端开发
 
@@ -132,4 +141,6 @@ $env:UVSC_KEIL_PATH = "E:\Keil\Keil_v5"
 $env:UVSC_MAP_FILE = "D:\path\to\application.map"
 $env:UVSC_INTERVAL_MS = "500"
 $env:UVSC_AUTO_REFRESH = "1"
+$env:SERIAL_PORT = "COM31"
+$env:SERIAL_BAUDRATE = "115200"
 ```

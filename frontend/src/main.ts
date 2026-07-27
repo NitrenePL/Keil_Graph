@@ -8,6 +8,7 @@ import {
 } from "./harmonics";
 
 type ScaleOperator = "multiply" | "divide";
+type DataSourceKind = "uvsc" | "serial";
 type PinnedCursorKey = "x1" | "x2";
 
 interface PinnedCursorElements {
@@ -33,7 +34,10 @@ interface SourceStatus {
 interface ViewerStatus extends SourceStatus {
   connected: boolean;
   target_state: "running" | "stopped" | "unknown";
-  port: number;
+  port: number | string;
+  data_source?: DataSourceKind;
+  serial_port?: string;
+  serial_baudrate?: number;
   sources: SourceStatus[];
   auto_refresh: boolean;
   interval_ms: number;
@@ -61,8 +65,11 @@ interface SocketEvent {
 
 interface SourceOptions {
   data_types: string[];
+  data_source: DataSourceKind;
   map_file: string;
   keil_path: string;
+  serial_port: string;
+  serial_baudrate: number;
   sources: SourceInput[];
   settings_file: string;
   export_channel_index: number;
@@ -75,7 +82,7 @@ interface SourcesUpdateResponse {
   status: ViewerStatus;
   map_file: string;
   keil_path: string;
-  dll_path: string;
+  dll_path: string | null;
   resolutions: Array<{
     array_name: string;
     address_hex: string;
@@ -85,9 +92,9 @@ interface SourcesUpdateResponse {
 }
 
 interface SourceTestResponse {
-  port: number;
+  port: number | string;
   target_state: "running" | "stopped";
-  dll_path: string;
+  dll_path: string | null;
   total_bytes: number;
   duration_ms: number;
   sources: Array<SourceStatus & {
@@ -103,8 +110,11 @@ interface ScaleUpdateResponse {
 }
 
 interface SourcesPayload {
-  map_file: string;
-  keil_path: string;
+  data_source: DataSourceKind;
+  map_file?: string;
+  keil_path?: string;
+  serial_port?: string;
+  serial_baudrate?: number;
   sources: SourceInput[];
 }
 
@@ -165,6 +175,11 @@ const sourceTemplate = byId<HTMLTemplateElement>("source-row-template");
 const addSourceButton = byId<HTMLButtonElement>("add-source");
 const sourceError = byId<HTMLParagraphElement>("source-error");
 const mapFileNote = byId<HTMLParagraphElement>("map-file-note");
+const sourceListDescription = byId<HTMLElement>("source-list-description");
+const dataSourceInput = byId<HTMLSelectElement>("data-source");
+const serialFields = byId<HTMLDivElement>("serial-fields");
+const serialPortInput = byId<HTMLInputElement>("serial-port");
+const serialBaudrateInput = byId<HTMLInputElement>("serial-baudrate");
 const mapFileInput = byId<HTMLInputElement>("map-file");
 const keilPathInput = byId<HTMLInputElement>("keil-path");
 const exportButton = byId<HTMLButtonElement>("export-button");
@@ -192,6 +207,7 @@ const fftMessage = byId<HTMLParagraphElement>("fft-message");
 let latestSnapshot: Snapshot | null = null;
 let latestStatus: ViewerStatus | null = null;
 let sourceOptions: SourceOptions | null = null;
+let sourceDialogDataSource: DataSourceKind | null = null;
 let reconnectTimer: number | undefined;
 let configTimer: number | undefined;
 let plot: uPlot | null = null;
@@ -1129,9 +1145,17 @@ const updateExportAvailability = (): void => {
 const updateStatus = (status: ViewerStatus): void => {
   latestStatus = status;
   const sources = normalizedSources(status);
+  const dataSource = status.data_source ?? sourceOptions?.data_source ?? "uvsc";
+  const isSerial = dataSource === "serial";
   connectionDot.classList.toggle("connected", status.connected);
-  connectionLabel.textContent = status.connected ? "UVSC 已连接" : "UVSC 未连接";
-  connectionDetail.textContent = status.last_error ?? `UVSOCK :${status.port}`;
+  connectionLabel.textContent = status.connected
+    ? isSerial ? "串口已连接" : "UVSC 已连接"
+    : isSerial ? "串口未连接" : "UVSC 未连接";
+  connectionDetail.textContent = status.last_error ?? (
+    isSerial
+      ? `${status.serial_port ?? status.port} @ ${status.serial_baudrate ?? "?"} baud`
+      : `UVSOCK :${status.port}`
+  );
   autoRefresh.checked = status.auto_refresh;
   intervalInput.value = String(status.interval_ms);
 
@@ -1147,7 +1171,9 @@ const updateStatus = (status: ViewerStatus): void => {
         ? "Stopped"
         : "Unknown";
   byId("memory-address").textContent = `${sources.length}`;
-  byId("uvsock-port").textContent = String(status.port);
+  byId("uvsock-port").textContent = isSerial
+    ? String(status.serial_port ?? status.port)
+    : String(status.port);
 
   if (seriesSignature(sources) !== plottedSignature) createPlot(sources);
   renderScaleControls(sources);
@@ -1213,9 +1239,10 @@ const loadInitialState = async (): Promise<void> => {
   activeFftConfig = options.fft_config;
   applyFftConfigToControls(activeFftConfig);
   updateStatus(status);
-  mapFileNote.textContent =
-    `保存不读取 · 留空的数组地址将从 MAP 解析 · `
-      + `最多 ${options.max_sources} 条曲线`;
+  dataSourceInput.value = options.data_source;
+  serialPortInput.value = options.serial_port;
+  serialBaudrateInput.value = String(options.serial_baudrate);
+  updateDataSourceFields();
   mapFileNote.title = `配置文件：${options.settings_file}`;
   try {
     updateSnapshot(await requestJson<Snapshot>("/api/snapshot"));
@@ -1285,7 +1312,11 @@ intervalInput.addEventListener("input", () => {
 
 manualButton.addEventListener("click", async () => {
   manualButton.disabled = true;
-  setMessage("正在读取目标内存…");
+  setMessage(
+    (latestStatus?.data_source ?? sourceOptions?.data_source) === "serial"
+      ? "正在等待下一帧串口数组数据…"
+      : "正在读取目标内存…",
+  );
   try {
     const snapshot = await requestJson<Snapshot>("/api/refresh", {
       method: "POST",
@@ -1403,6 +1434,67 @@ const updateSourceNumbers = (): void => {
     rows.length >= (sourceOptions?.max_sources ?? COLORS.length);
 };
 
+const selectedDataSource = (): DataSourceKind =>
+  dataSourceInput.value === "serial" ? "serial" : "uvsc";
+
+const updateDataSourceFields = (): void => {
+  const dataSource = selectedDataSource();
+  const isSerial = dataSource === "serial";
+  const sourceChanged = sourceDialogDataSource !== dataSource;
+  sourceDialogDataSource = dataSource;
+  serialFields.hidden = !isSerial;
+  serialPortInput.required = isSerial;
+  serialPortInput.disabled = !isSerial;
+  serialBaudrateInput.disabled = !isSerial;
+  mapFileInput.required = !isSerial;
+  mapFileInput.disabled = isSerial;
+  keilPathInput.required = !isSerial;
+  keilPathInput.disabled = isSerial;
+  mapFileInput.closest("label")?.toggleAttribute("hidden", isSerial);
+  keilPathInput.closest("label")?.toggleAttribute("hidden", isSerial);
+  sourceTest.textContent = isSerial ? "测试串口" : "测试配置";
+  sourceListDescription.textContent = isSerial
+    ? "按 KAV1 帧中的通道号提取并绘制"
+    : "同一刷新周期内依次读取并绘制";
+
+  const rows = Array.from(sourceList.querySelectorAll<HTMLElement>(".source-row"));
+  rows.forEach((row, index) => {
+    const address = row.querySelector<HTMLInputElement>("[data-field=address]");
+    const label = row.querySelector<HTMLElement>(".source-address-label");
+    const dtype = row.querySelector<HTMLSelectElement>("[data-field=dtype]");
+    if (!address || !label || !dtype) return;
+
+    if (isSerial && sourceChanged) {
+      row.dataset.uvscAddress = address.value;
+      row.dataset.uvscDtype = dtype.value;
+      address.value = row.dataset.serialChannel ?? String(index);
+    }
+    if (isSerial) {
+      address.placeholder = "KAV1 通道号，例如 0";
+      label.textContent = "串口通道号";
+      dtype.value = "float32";
+      dtype.disabled = true;
+    } else if (sourceChanged) {
+      row.dataset.serialChannel = address.value;
+      address.value = row.dataset.uvscAddress ?? "";
+      dtype.value = row.dataset.uvscDtype ?? dtype.value;
+      address.placeholder = "留空按 MAP 解析";
+      label.textContent = "起始地址（可选）";
+      dtype.disabled = false;
+    } else {
+      address.placeholder = "留空按 MAP 解析";
+      label.textContent = "起始地址（可选）";
+      dtype.disabled = false;
+    }
+  });
+
+  mapFileNote.textContent = isSerial
+    ? "KAV1：每条曲线按“串口通道号”从帧中取 float32 数组 · 最多 "
+      + `${sourceOptions?.max_sources ?? COLORS.length} 条曲线`
+    : "保存不读取 · 留空的数组地址将从 MAP 文件解析 · 最多 "
+      + `${sourceOptions?.max_sources ?? COLORS.length} 条曲线`;
+};
+
 const addSourceRow = (
   source?: SourceStatus,
   configured?: SourceInput,
@@ -1435,17 +1527,27 @@ const addSourceRow = (
     configured?.address === null || configured?.address === undefined
       ? ""
       : typeof configured.address === "number"
-        ? `0x${configured.address.toString(16).toUpperCase()}`
+        ? selectedDataSource() === "serial"
+          ? String(configured.address)
+          : `0x${configured.address.toString(16).toUpperCase()}`
         : configured.address;
   address.placeholder = source
     ? `自动解析；当前 ${source.address_hex}`
     : "留空按 MAP 解析";
+  if (selectedDataSource() === "serial" && address.value) {
+    row.dataset.serialChannel = address.value;
+  }
+  if (selectedDataSource() === "serial" && !address.value) {
+    address.value = String(sourceList.children.length);
+    row.dataset.serialChannel = address.value;
+  }
   row.querySelector(".remove-source")?.addEventListener("click", () => {
     row.remove();
     updateSourceNumbers();
   });
   sourceList.appendChild(fragment);
   updateSourceNumbers();
+  updateDataSourceFields();
 };
 
 const renderSourceRows = (
@@ -1482,11 +1584,22 @@ const collectSourceRows = (): SourceInput[] =>
     },
   );
 
-const draftSourcesPayload = (): SourcesPayload => ({
-  map_file: mapFileInput.value.trim(),
-  keil_path: keilPathInput.value.trim(),
-  sources: collectSourceRows(),
-});
+const draftSourcesPayload = (): SourcesPayload => {
+  const dataSource = selectedDataSource();
+  return {
+    data_source: dataSource,
+    ...(dataSource === "serial"
+      ? {
+          serial_port: serialPortInput.value.trim(),
+          serial_baudrate: Number(serialBaudrateInput.value),
+        }
+      : {
+          map_file: mapFileInput.value.trim(),
+          keil_path: keilPathInput.value.trim(),
+        }),
+    sources: collectSourceRows(),
+  };
+};
 
 const formatSourceTestResult = (result: SourceTestResponse): string => {
   const target = result.target_state === "running" ? "Running" : "Stopped";
@@ -1505,7 +1618,12 @@ const runSourceTest = async (
   report: (message: string, isError: boolean) => void,
 ): Promise<void> => {
   button.disabled = true;
-  report("正在验证 MAP、UVSC DLL 并读取数组…", false);
+  report(
+    config.data_source === "serial"
+      ? "正在验证串口连接与 KAV1 接收状态…"
+      : "正在验证 MAP、UVSC DLL 并读取数组…",
+    false,
+  );
   try {
     const result = await requestJson<SourceTestResponse>("/api/sources/test", {
       method: "POST",
@@ -1527,8 +1645,12 @@ const closeSourceDialog = (): void => {
 };
 
 sourceConfigButton.addEventListener("click", () => {
+  sourceDialogDataSource = null;
+  dataSourceInput.value = sourceOptions?.data_source ?? "uvsc";
   mapFileInput.value = sourceOptions?.map_file ?? "";
   keilPathInput.value = sourceOptions?.keil_path ?? "";
+  serialPortInput.value = sourceOptions?.serial_port ?? "COM31";
+  serialBaudrateInput.value = String(sourceOptions?.serial_baudrate ?? 115200);
   if (latestStatus) {
     renderSourceRows(
       normalizedSources(latestStatus),
@@ -1538,10 +1660,12 @@ sourceConfigButton.addEventListener("click", () => {
     renderSourceRows([]);
     addSourceRow();
   }
+  updateDataSourceFields();
   sourceError.textContent = "";
   sourceError.classList.remove("success");
   sourceDialog.showModal();
 });
+dataSourceInput.addEventListener("change", updateDataSourceFields);
 addSourceButton.addEventListener("click", () => addSourceRow());
 sourceDialogClose.addEventListener("click", closeSourceDialog);
 sourceCancel.addEventListener("click", closeSourceDialog);
@@ -1556,8 +1680,11 @@ sourceTestButton.addEventListener("click", async () => {
   }
   await runSourceTest(
     {
+      data_source: sourceOptions.data_source,
       map_file: sourceOptions.map_file,
       keil_path: sourceOptions.keil_path,
+      serial_port: sourceOptions.serial_port,
+      serial_baudrate: sourceOptions.serial_baudrate,
       sources: sourceOptions.sources,
     },
     sourceTestButton,
@@ -1593,19 +1720,31 @@ sourceForm.addEventListener("submit", async (event) => {
       body: JSON.stringify(payload),
     });
     if (sourceOptions) {
+      sourceOptions.data_source = payload.data_source;
       sourceOptions.map_file = response.map_file;
       sourceOptions.keil_path = response.keil_path;
+      sourceOptions.serial_port = payload.serial_port
+        ?? sourceOptions.serial_port;
+      sourceOptions.serial_baudrate = payload.serial_baudrate
+        ?? sourceOptions.serial_baudrate;
       sourceOptions.sources = payload.sources;
     }
     updateStatus(response.status);
     clearSnapshotView(normalizedSources(response.status));
-    const mapCount = response.resolutions.filter(
-      (item) => item.resolved_from_map,
-    ).length;
-    setMessage(
-      `已保存 ${payload.sources.length} 条曲线，`
-        + `${mapCount} 条由 MAP 解析；可测试或立即刷新`,
-    );
+    if (payload.data_source === "serial") {
+      setMessage(
+        `已切换到串口 ${payload.serial_port} @ ${payload.serial_baudrate} baud，`
+          + `等待 KAV1 数组帧`,
+      );
+    } else {
+      const mapCount = response.resolutions.filter(
+        (item) => item.resolved_from_map,
+      ).length;
+      setMessage(
+        `已保存 ${payload.sources.length} 条曲线，`
+          + `${mapCount} 条由 MAP 解析；可测试或立即刷新`,
+      );
+    }
     closeSourceDialog();
   } catch (error) {
     sourceError.textContent = (error as Error).message;

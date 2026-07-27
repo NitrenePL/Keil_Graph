@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -28,6 +29,7 @@ from backend.source_config import (
     DATA_TYPES,
     MapSymbolResolver,
 )
+from backend.serial_service import SerialArrayService
 from uvsc_smoke_test import UvscError
 
 
@@ -77,8 +79,11 @@ class SourceUpdate(BaseModel):
 
 
 class SourcesUpdate(BaseModel):
+    data_source: Literal["uvsc", "serial"] = "uvsc"
     map_file: str | None = Field(default=None, max_length=4096)
     keil_path: str | None = Field(default=None, max_length=4096)
+    serial_port: str | None = Field(default=None, max_length=256)
+    serial_baudrate: int | None = Field(default=None, ge=300, le=12_000_000)
     sources: list[SourceUpdate] = Field(
         min_length=1,
         max_length=MAX_SOURCES,
@@ -118,11 +123,14 @@ class FftConfig(BaseModel):
 
 
 class SavedSettings(BaseModel):
-    version: int = 1
+    version: int = 2
     auto_refresh: bool
     interval_ms: int = Field(ge=MIN_INTERVAL_MS, le=MAX_INTERVAL_MS)
     map_file: str = Field(min_length=1, max_length=4096)
     keil_path: str = Field(min_length=1, max_length=4096)
+    data_source: Literal["uvsc", "serial"] = "uvsc"
+    serial_port: str = "COM31"
+    serial_baudrate: int = Field(default=115_200, ge=300, le=12_000_000)
     sources: list[SourceUpdate] = Field(
         min_length=1,
         max_length=MAX_SOURCES,
@@ -184,9 +192,13 @@ current_source_configs = [
 current_export_channel_index = 0
 current_export_frequency_hz = 20_000
 current_fft_config = FftConfig()
+current_data_source: Literal["uvsc", "serial"] = "uvsc"
+current_serial_port = os.getenv("SERIAL_PORT", "COM31")
+current_serial_baudrate = env_int("SERIAL_BAUDRATE", 115_200)
+UVSC_PORT = env_int("UVSC_PORT", 35876)
 service = UvscArrayService(
     workspace=WORKSPACE,
-    port=env_int("UVSC_PORT", 35876),
+    port=UVSC_PORT,
     address=env_int("UVSC_ARRAY_ADDRESS", 0x200041E4),
     count=env_int("UVSC_ARRAY_COUNT", 400),
     array_name=os.getenv("UVSC_ARRAY_NAME", "myLOGGER0Arr"),
@@ -195,10 +207,117 @@ service = UvscArrayService(
     auto_refresh=os.getenv("UVSC_AUTO_REFRESH", "1") != "0",
     dll_path=current_keil_path,
 )
+service: UvscArrayService | SerialArrayService
+service_listener: Any | None = None
+service_started = False
+
+
+def create_uvsc_service(
+    sources: tuple[ArraySource, ...],
+    dll_path: Path,
+    *,
+    interval_ms: int,
+    auto_refresh: bool,
+) -> UvscArrayService:
+    first = sources[0]
+    return UvscArrayService(
+        workspace=WORKSPACE,
+        port=UVSC_PORT,
+        address=first.address,
+        count=first.count,
+        array_name=first.name,
+        data_type=first.data_type,
+        interval_ms=interval_ms,
+        auto_refresh=auto_refresh,
+        dll_path=dll_path,
+    )
+
+
+def serial_sources(config: SourcesUpdate) -> tuple[ArraySource, ...]:
+    sources: list[ArraySource] = []
+    for index, item in enumerate(config.sources):
+        if item.dtype != "float32":
+            raise ValueError("KAV1 串口协议只支持 float32")
+        channel = index if item.address is None else parse_address(item.address)
+        if channel is None:
+            channel = index
+        sources.append(
+            ArraySource(
+                name=item.array_name.strip(),
+                address=channel,
+                count=item.count,
+                data_type=item.dtype,
+                scale_operator=item.scale_operator,
+                scale_factor=item.scale_factor,
+            )
+        )
+    return tuple(sources)
+
+
+def test_serial_configuration(
+    port: str,
+    baudrate: int,
+    sources: tuple[ArraySource, ...],
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Open an unsaved serial configuration and wait for one valid KAV1 frame."""
+    started = time.perf_counter()
+    probe = SerialArrayService(
+        port=port,
+        baudrate=baudrate,
+        sources=sources,
+        interval_ms=MIN_INTERVAL_MS,
+        auto_refresh=True,
+    )
+    probe.start()
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            snapshot = probe.get_latest()
+            if snapshot is not None:
+                return {
+                    "port": port,
+                    "target_state": "running",
+                    "dll_path": None,
+                    "total_bytes": sum(item.count * 4 for item in sources),
+                    "duration_ms": round(
+                        (time.perf_counter() - started) * 1000,
+                        3,
+                    ),
+                    "sources": [
+                        item.as_status()
+                        | {
+                            "byte_count": item.count * 4,
+                            "read_duration_ms": 0.0,
+                        }
+                        for item in sources
+                    ],
+                    "warnings": [],
+                }
+            status = probe.get_status()
+            if status["last_error"]:
+                raise ValueError(status["last_error"])
+            time.sleep(0.05)
+        raise ValueError("等待 KAV1 数组帧超时")
+    finally:
+        probe.stop()
+
+
+def replace_service(next_service: UvscArrayService | SerialArrayService) -> None:
+    global service
+    previous = service
+    if service_started:
+        previous.stop()
+    service = next_service
+    if service_listener is not None:
+        service.set_listener(service_listener)
+    if service_started:
+        service.start()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global service_listener, service_started
     loop = asyncio.get_running_loop()
 
     try:
@@ -209,11 +328,14 @@ async def lifespan(_app: FastAPI):
     def publish(event: dict[str, Any]) -> None:
         asyncio.run_coroutine_threadsafe(hub.broadcast(event), loop)
 
+    service_listener = publish
     service.set_listener(publish)
+    service_started = True
     service.start()
     try:
         yield
     finally:
+        service_started = False
         service.set_listener(None)
         await asyncio.to_thread(service.stop)
 
@@ -349,8 +471,11 @@ def parse_address(value: int | str | None) -> int | None:
 async def get_source_options() -> dict[str, Any]:
     return {
         "data_types": list(DATA_TYPES),
+        "data_source": current_data_source,
         "map_file": str(current_map_file),
         "keil_path": str(current_keil_path),
+        "serial_port": current_serial_port,
+        "serial_baudrate": current_serial_baudrate,
         "sources": [
             item.model_dump(mode="json") for item in current_source_configs
         ],
@@ -429,14 +554,57 @@ def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
     global current_export_channel_index
     global current_fft_config
     global current_keil_path, current_map_file, current_source_configs
+    global current_data_source, current_serial_port, current_serial_baudrate
+    if config.data_source == "serial":
+        port = (config.serial_port or current_serial_port).strip()
+        baudrate = config.serial_baudrate or current_serial_baudrate
+        if not port:
+            raise ValueError("串口号不能为空")
+        sources = serial_sources(config)
+        status = service.get_status()
+        next_service = SerialArrayService(
+            port=port,
+            baudrate=baudrate,
+            sources=sources,
+            interval_ms=status["interval_ms"],
+            auto_refresh=status["auto_refresh"],
+        )
+        replace_service(next_service)
+        current_data_source = "serial"
+        current_serial_port = port
+        current_serial_baudrate = baudrate
+        current_source_configs = list(config.sources)
+        current_export_channel_index = min(current_export_channel_index, len(sources) - 1)
+        if current_fft_config.channel_index >= len(sources):
+            current_fft_config = current_fft_config.model_copy(update={"channel_index": 0})
+        return {
+            "status": service.get_status(),
+            "resolutions": [],
+            "map_file": str(current_map_file),
+            "keil_path": str(current_keil_path),
+            "dll_path": None,
+        }
     map_file, keil_path, resolved = resolve_sources_config(config)
-    runtime = service.configure_sources_and_dll(
-        (item[0] for item in resolved),
-        keil_path,
-    )
+    uvsc_sources = tuple(item[0] for item in resolved)
+    if isinstance(service, UvscArrayService):
+        runtime = service.configure_sources_and_dll(uvsc_sources, keil_path)
+    else:
+        serial_status = service.get_status()
+        next_service = create_uvsc_service(
+            uvsc_sources,
+            keil_path,
+            interval_ms=serial_status["interval_ms"],
+            auto_refresh=serial_status["auto_refresh"],
+        )
+        runtime = next_service.configure_sources_and_dll(
+            uvsc_sources,
+            keil_path,
+        )
+        replace_service(next_service)
     current_map_file = map_file
     current_keil_path = keil_path
     current_source_configs = list(config.sources)
+    current_data_source = "uvsc"
     current_export_channel_index = min(
         current_export_channel_index,
         len(current_source_configs) - 1,
@@ -456,20 +624,67 @@ def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
 
 @app.post("/api/sources/test")
 async def test_sources(config: SourcesUpdate) -> dict[str, Any]:
+    if config.data_source == "serial":
+        try:
+            port = (config.serial_port or current_serial_port).strip()
+            baudrate = config.serial_baudrate or current_serial_baudrate
+            sources = serial_sources(config)
+            if (
+                current_data_source == "serial"
+                and port == current_serial_port
+                and baudrate == current_serial_baudrate
+            ):
+                status = service.get_status()
+                if not status["connected"]:
+                    raise ValueError(status["last_error"] or "串口尚未连接")
+                if service.get_latest() is None:
+                    raise ValueError("串口已连接，但尚未收到有效 KAV1 数组帧")
+                return {
+                    "port": port,
+                    "target_state": "running",
+                    "dll_path": None,
+                    "total_bytes": sum(item.count * 4 for item in sources),
+                    "duration_ms": 0.0,
+                    "sources": [item.as_status() | {"byte_count": item.count * 4, "read_duration_ms": 0.0} for item in sources],
+                    "warnings": [],
+                }
+            return await asyncio.to_thread(
+                test_serial_configuration,
+                port,
+                baudrate,
+                sources,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         map_file, keil_path, resolved = resolve_sources_config(config)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    uvsc_sources = tuple(item[0] for item in resolved)
+    test_service = service
+    stop_test_service = False
+    if not isinstance(test_service, UvscArrayService):
+        test_service = create_uvsc_service(
+            uvsc_sources,
+            keil_path,
+            interval_ms=MIN_INTERVAL_MS,
+            auto_refresh=False,
+        )
+        test_service.start()
+        stop_test_service = True
     try:
         result = await asyncio.to_thread(
-            service.test_configuration,
-            tuple(item[0] for item in resolved),
+            test_service.test_configuration,
+            uvsc_sources,
             keil_path,
             30.0,
         )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        if stop_test_service:
+            await asyncio.to_thread(test_service.stop)
 
     return {
         **result,
@@ -521,6 +736,9 @@ def current_saved_settings() -> SavedSettings:
         interval_ms=status["interval_ms"],
         map_file=str(current_map_file),
         keil_path=str(current_keil_path),
+        data_source=current_data_source,
+        serial_port=current_serial_port,
+        serial_baudrate=current_serial_baudrate,
         sources=current_source_configs,
         export_channel_index=current_export_channel_index,
         export_frequency_hz=current_export_frequency_hz,
@@ -548,8 +766,11 @@ def restore_saved_settings() -> bool:
     settings = SavedSettings.model_validate(payload)
     apply_sources(
         SourcesUpdate(
+            data_source=settings.data_source,
             map_file=settings.map_file,
             keil_path=settings.keil_path,
+            serial_port=settings.serial_port,
+            serial_baudrate=settings.serial_baudrate,
             sources=settings.sources,
         )
     )

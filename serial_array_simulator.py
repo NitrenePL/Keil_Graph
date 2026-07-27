@@ -17,10 +17,10 @@ import serial
 
 
 MAGIC = b"KAV1"
-PROTOCOL_VERSION = 1
-# magic, version, channel count, samples/channel, sequence, capture time,
-# payload byte count. All multi-byte fields are little-endian.
-HEADER = struct.Struct("<4sBBHIQI")
+PROTOCOL_VERSION = 2
+# magic, version, channel count, samples/channel, sequence, payload byte
+# count. All multi-byte fields are little-endian.
+HEADER = struct.Struct("<4sBBHII")
 CRC = struct.Struct("<I")
 BITS_PER_BYTE_8N1 = 10
 DEFAULT_PORT = "COM30"
@@ -61,7 +61,6 @@ def build_frame(
     sequence: int,
     channel_count: int,
     samples_per_channel: int,
-    captured_at_ms: int,
 ) -> bytes:
     """Encode one CRC-protected KAV1 binary frame."""
     values = build_values(sequence, channel_count, samples_per_channel)
@@ -72,7 +71,6 @@ def build_frame(
         channel_count,
         samples_per_channel,
         sequence,
-        captured_at_ms,
         len(payload),
     )
     return header + payload + CRC.pack(zlib.crc32(header + payload))
@@ -166,7 +164,6 @@ def main() -> None:
                     sequence=sequence,
                     channel_count=args.channels,
                     samples_per_channel=args.samples,
-                    captured_at_ms=time.time_ns() // 1_000_000,
                 )
                 written = port.write(frame)
                 port.flush()
