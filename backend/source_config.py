@@ -28,6 +28,10 @@ DATA_TYPES = {
     )
 }
 
+SCALE_OPERATORS = {"multiply", "divide"}
+MIN_SCALE_FACTOR = 1e-12
+MAX_SCALE_FACTOR = 1e12
+
 
 @dataclass(frozen=True)
 class ArraySource:
@@ -35,6 +39,14 @@ class ArraySource:
     address: int
     count: int
     data_type: str
+    scale_operator: str = "multiply"
+    scale_factor: float = 1.0
+
+    @property
+    def scale_multiplier(self) -> float:
+        if self.scale_operator == "divide":
+            return 1.0 / self.scale_factor
+        return self.scale_factor
 
     def as_status(self) -> dict[str, object]:
         return {
@@ -43,6 +55,8 @@ class ArraySource:
             "address_hex": f"0x{self.address:08X}",
             "count": self.count,
             "dtype": self.data_type,
+            "scale_operator": self.scale_operator,
+            "scale_factor": self.scale_factor,
         }
 
 

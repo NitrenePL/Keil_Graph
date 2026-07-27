@@ -23,6 +23,11 @@
             数据源
           </button>
 
+          <button id="source-test-button" class="config-button" type="button">
+            <span aria-hidden="true">✓</span>
+            测试数据源
+          </button>
+
           <button
             id="export-button"
             class="config-button export-button"
@@ -92,7 +97,16 @@
             </div>
           </div>
 
-          <div id="waveform" class="waveform"></div>
+          <div class="waveform-stage">
+            <aside class="scale-panel" aria-labelledby="scale-panel-title">
+              <header class="scale-panel-heading">
+                <strong id="scale-panel-title">垂直倍率</strong>
+                <span>每通道</span>
+              </header>
+              <div id="scale-controls" class="scale-controls"></div>
+            </aside>
+            <div id="waveform" class="waveform"></div>
+          </div>
 
           <section class="channel-measurements" aria-labelledby="measurement-title">
             <header class="measurement-heading">
@@ -258,7 +272,7 @@
             </label>
 
             <p id="map-file-note" class="map-file-note">
-              配置自动保存 · 留空的数组地址将从 MAP 文件解析
+              保存不读取 · 留空的数组地址将从 MAP 文件解析
             </p>
 
             <div class="source-list-heading">
@@ -285,11 +299,18 @@
               取消
             </button>
             <button
+              id="source-test"
+              class="dialog-button test"
+              type="button"
+            >
+              测试配置
+            </button>
+            <button
               id="source-save"
               class="dialog-button primary"
               type="submit"
             >
-              保存并读取
+              保存配置
             </button>
           </footer>
         </form>
@@ -412,6 +433,7 @@
                 autocomplete="off"
               />
             </label>
+
           </div>
         </article>
       </template>

@@ -8,8 +8,8 @@
       content="通过 Keil UVSC 实时查看 STM32 数组波形"
     />
     <title>Keil Array Viewer</title>
-    <script type="module" crossorigin src="/assets/index-C6Xv8xuK.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-NXoaxsaB.css">
+    <script type="module" crossorigin src="/assets/index-BYZr3_W-.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BNEkrsf2.css">
   </head>
   <body>
     <div id="app">
@@ -23,6 +23,11 @@
           <button id="source-config-button" class="config-button" type="button">
             <span aria-hidden="true">⚙</span>
             数据源
+          </button>
+
+          <button id="source-test-button" class="config-button" type="button">
+            <span aria-hidden="true">✓</span>
+            测试数据源
           </button>
 
           <button
@@ -94,7 +99,16 @@
             </div>
           </div>
 
-          <div id="waveform" class="waveform"></div>
+          <div class="waveform-stage">
+            <aside class="scale-panel" aria-labelledby="scale-panel-title">
+              <header class="scale-panel-heading">
+                <strong id="scale-panel-title">垂直倍率</strong>
+                <span>每通道</span>
+              </header>
+              <div id="scale-controls" class="scale-controls"></div>
+            </aside>
+            <div id="waveform" class="waveform"></div>
+          </div>
 
           <section class="channel-measurements" aria-labelledby="measurement-title">
             <header class="measurement-heading">
@@ -260,7 +274,7 @@
             </label>
 
             <p id="map-file-note" class="map-file-note">
-              配置自动保存 · 留空的数组地址将从 MAP 文件解析
+              保存不读取 · 留空的数组地址将从 MAP 文件解析
             </p>
 
             <div class="source-list-heading">
@@ -287,11 +301,18 @@
               取消
             </button>
             <button
+              id="source-test"
+              class="dialog-button test"
+              type="button"
+            >
+              测试配置
+            </button>
+            <button
               id="source-save"
               class="dialog-button primary"
               type="submit"
             >
-              保存并读取
+              保存配置
             </button>
           </footer>
         </form>
@@ -414,6 +435,7 @@
                 autocomplete="off"
               />
             </label>
+
           </div>
         </article>
       </template>

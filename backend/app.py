@@ -21,7 +21,13 @@ from backend.array_service import (
     MIN_INTERVAL_MS,
     UvscArrayService,
 )
-from backend.source_config import ArraySource, DATA_TYPES, MapSymbolResolver
+from backend.source_config import (
+    MAX_SCALE_FACTOR,
+    MIN_SCALE_FACTOR,
+    ArraySource,
+    DATA_TYPES,
+    MapSymbolResolver,
+)
 from uvsc_smoke_test import UvscError
 
 
@@ -61,6 +67,13 @@ class SourceUpdate(BaseModel):
     count: int = Field(ge=1)
     dtype: str
     address: int | str | None = None
+    scale_operator: Literal["multiply", "divide"] = "multiply"
+    scale_factor: float = Field(
+        default=1.0,
+        ge=MIN_SCALE_FACTOR,
+        le=MAX_SCALE_FACTOR,
+        allow_inf_nan=False,
+    )
 
 
 class SourcesUpdate(BaseModel):
@@ -69,6 +82,16 @@ class SourcesUpdate(BaseModel):
     sources: list[SourceUpdate] = Field(
         min_length=1,
         max_length=MAX_SOURCES,
+    )
+
+
+class ScaleUpdate(BaseModel):
+    channel_index: int = Field(ge=0)
+    scale_operator: Literal["multiply", "divide"]
+    scale_factor: float = Field(
+        ge=MIN_SCALE_FACTOR,
+        le=MAX_SCALE_FACTOR,
+        allow_inf_nan=False,
     )
 
 
@@ -366,6 +389,8 @@ def resolve_source(
         address=address,
         count=config.count,
         data_type=config.dtype,
+        scale_operator=config.scale_operator,
+        scale_factor=config.scale_factor,
     )
     resolution = {
         "array_name": source.name,
@@ -377,10 +402,13 @@ def resolve_source(
     return source, resolution
 
 
-def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
-    global current_export_channel_index
-    global current_fft_config
-    global current_keil_path, current_map_file, current_source_configs
+def resolve_sources_config(
+    config: SourcesUpdate,
+) -> tuple[
+    Path,
+    Path,
+    list[tuple[ArraySource, dict[str, Any]]],
+]:
     map_file_text = (config.map_file or str(current_map_file)).strip()
     if not map_file_text:
         raise ValueError("MAP 文件路径不能为空")
@@ -394,6 +422,14 @@ def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
     resolved = [
         resolve_source(item, symbol_resolver) for item in config.sources
     ]
+    return map_file, keil_path, resolved
+
+
+def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
+    global current_export_channel_index
+    global current_fft_config
+    global current_keil_path, current_map_file, current_source_configs
+    map_file, keil_path, resolved = resolve_sources_config(config)
     runtime = service.configure_sources_and_dll(
         (item[0] for item in resolved),
         keil_path,
@@ -415,6 +451,66 @@ def apply_sources(config: SourcesUpdate) -> dict[str, Any]:
         "map_file": str(current_map_file),
         "keil_path": str(current_keil_path),
         "dll_path": runtime["dll_path"],
+    }
+
+
+@app.post("/api/sources/test")
+async def test_sources(config: SourcesUpdate) -> dict[str, Any]:
+    try:
+        map_file, keil_path, resolved = resolve_sources_config(config)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        result = await asyncio.to_thread(
+            service.test_configuration,
+            tuple(item[0] for item in resolved),
+            keil_path,
+            30.0,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {
+        **result,
+        "map_file": str(map_file),
+        "resolutions": [item[1] for item in resolved],
+    }
+
+
+@app.put("/api/source/scale")
+async def update_source_scale(config: ScaleUpdate) -> dict[str, Any]:
+    global current_source_configs
+    if config.channel_index >= len(current_source_configs):
+        raise HTTPException(status_code=422, detail="缩放通道不存在")
+
+    updated_source = current_source_configs[
+        config.channel_index
+    ].model_copy(
+        update={
+            "scale_operator": config.scale_operator,
+            "scale_factor": config.scale_factor,
+        }
+    )
+    try:
+        status = service.configure_scale(
+            config.channel_index,
+            config.scale_operator,
+            config.scale_factor,
+        )
+        current_source_configs[config.channel_index] = updated_source
+        save_current_settings()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"保存倍率失败：{exc}",
+        ) from exc
+
+    return {
+        "status": status,
+        "source": updated_source.model_dump(mode="json"),
     }
 
 

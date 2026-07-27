@@ -7,12 +7,16 @@ import {
   type HarmonicAnalysis,
 } from "./harmonics";
 
+type ScaleOperator = "multiply" | "divide";
+
 interface SourceStatus {
   array_name: string;
   address: number;
   address_hex: string;
   count: number;
   dtype: string;
+  scale_operator: ScaleOperator;
+  scale_factor: number;
 }
 
 interface ViewerStatus extends SourceStatus {
@@ -69,11 +73,37 @@ interface SourcesUpdateResponse {
   }>;
 }
 
+interface SourceTestResponse {
+  port: number;
+  target_state: "running" | "stopped";
+  dll_path: string;
+  total_bytes: number;
+  duration_ms: number;
+  sources: Array<SourceStatus & {
+    byte_count: number;
+    read_duration_ms: number;
+  }>;
+  warnings: string[];
+}
+
+interface ScaleUpdateResponse {
+  status: ViewerStatus;
+  source: SourceInput;
+}
+
+interface SourcesPayload {
+  map_file: string;
+  keil_path: string;
+  sources: SourceInput[];
+}
+
 interface SourceInput {
   array_name: string;
   count: number;
   dtype: string;
   address: string | number | null;
+  scale_operator: ScaleOperator;
+  scale_factor: number;
 }
 
 const COLORS = [
@@ -101,15 +131,18 @@ const intervalInput = byId<HTMLInputElement>("interval-ms");
 const manualButton = byId<HTMLButtonElement>("manual-refresh");
 const controlMessage = byId<HTMLParagraphElement>("control-message");
 const waveform = byId<HTMLDivElement>("waveform");
+const scaleControls = byId<HTMLDivElement>("scale-controls");
 const measurementRows = byId<HTMLDivElement>("measurement-rows");
 const legend = document.querySelector<HTMLDivElement>(".legend");
 
 const sourceConfigButton = byId<HTMLButtonElement>("source-config-button");
+const sourceTestButton = byId<HTMLButtonElement>("source-test-button");
 const sourceDialog = byId<HTMLDialogElement>("source-dialog");
 const sourceDialogClose = byId<HTMLButtonElement>("source-dialog-close");
 const sourceCancel = byId<HTMLButtonElement>("source-cancel");
 const sourceForm = byId<HTMLFormElement>("source-form");
 const sourceSave = byId<HTMLButtonElement>("source-save");
+const sourceTest = byId<HTMLButtonElement>("source-test");
 const sourceList = byId<HTMLDivElement>("source-list");
 const sourceTemplate = byId<HTMLTemplateElement>("source-row-template");
 const addSourceButton = byId<HTMLButtonElement>("add-source");
@@ -175,12 +208,31 @@ const normalizedSources = (status: ViewerStatus): SourceStatus[] =>
           address_hex: status.address_hex,
           count: status.count,
           dtype: status.dtype,
+          scale_operator: status.scale_operator,
+          scale_factor: status.scale_factor,
         },
       ];
 
+const formatScaleFactor = (factor: number): string => {
+  if (factor >= 1_000_000 || factor < 0.0001) {
+    return factor.toExponential(4);
+  }
+  return String(Number(factor.toPrecision(8)));
+};
+
+const sourceDisplayName = (source: SourceStatus): string => {
+  if (source.scale_factor === 1) return source.array_name;
+  const operator = source.scale_operator === "divide" ? "÷" : "×";
+  return `${source.array_name} ${operator}${formatScaleFactor(source.scale_factor)}`;
+};
+
 const seriesSignature = (sources: SourceStatus[]): string =>
   sources
-    .map((source) => `${source.array_name}:${source.count}:${source.dtype}`)
+    .map(
+      (source) =>
+        `${source.array_name}:${source.count}:${source.dtype}:`
+          + `${source.scale_operator}:${source.scale_factor}`,
+    )
     .join("|");
 
 const renderTooltip = (
@@ -201,7 +253,8 @@ const renderTooltip = (
     dot.style.backgroundColor = COLORS[seriesIndex % COLORS.length];
     const label = document.createElement("span");
     label.textContent =
-      `${item.array_name}: (${index}, ${item.values[index].toFixed(7)})`;
+      `${sourceDisplayName(item)}: `
+        + `(${index}, ${item.values[index].toFixed(7)})`;
     row.append(dot, label);
     pointTooltip.appendChild(row);
   });
@@ -243,9 +296,105 @@ const renderLegend = (sources: SourceStatus[]): void => {
     const line = document.createElement("i");
     line.style.backgroundColor = COLORS[index % COLORS.length];
     const label = document.createElement("span");
-    label.textContent = source.array_name;
+    label.textContent = sourceDisplayName(source);
     item.append(line, label);
     legend.appendChild(item);
+  });
+};
+
+const renderScaleControls = (sources: SourceStatus[]): void => {
+  scaleControls.replaceChildren();
+  sources.forEach((source, index) => {
+    const row = document.createElement("article");
+    row.className = "scale-control-row";
+
+    const heading = document.createElement("header");
+    const dot = document.createElement("i");
+    dot.style.backgroundColor = COLORS[index % COLORS.length];
+    const name = document.createElement("strong");
+    name.textContent = source.array_name;
+    name.title = source.array_name;
+    heading.append(dot, name);
+
+    const fields = document.createElement("div");
+    fields.className = "scale-control-fields";
+    const operator = document.createElement("select");
+    operator.ariaLabel = `${source.array_name} 缩放操作`;
+    [
+      ["multiply", "×"],
+      ["divide", "÷"],
+    ].forEach(([value, label]) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      operator.appendChild(option);
+    });
+    operator.value = source.scale_operator;
+
+    const factor = document.createElement("input");
+    factor.type = "number";
+    factor.min = "0.000000000001";
+    factor.max = "1000000000000";
+    factor.step = "any";
+    factor.value = String(source.scale_factor);
+    factor.ariaLabel = `${source.array_name} 缩放倍率`;
+
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.textContent = "应用";
+    apply.addEventListener("click", async () => {
+      const scaleFactor = Number(factor.value);
+      if (
+        !Number.isFinite(scaleFactor)
+        || scaleFactor < 1e-12
+        || scaleFactor > 1e12
+      ) {
+        setMessage("缩放倍率必须在 1e-12～1e12 之间", true);
+        factor.focus();
+        return;
+      }
+
+      apply.disabled = true;
+      let saved = false;
+      try {
+        setMessage(`正在保存 ${source.array_name} 的垂直倍率…`);
+        const response = await requestJson<ScaleUpdateResponse>(
+          "/api/source/scale",
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              channel_index: index,
+              scale_operator: operator.value,
+              scale_factor: scaleFactor,
+            }),
+          },
+        );
+        saved = true;
+        if (sourceOptions) sourceOptions.sources[index] = response.source;
+        updateStatus(response.status);
+        clearSnapshotView(normalizedSources(response.status));
+        setMessage("倍率已保存，正在重新读取目标数组…");
+        const snapshot = await requestJson<Snapshot>("/api/refresh", {
+          method: "POST",
+        });
+        updateSnapshot(snapshot);
+        setMessage(
+          `${source.array_name} 已设置为 `
+            + `${operator.value === "divide" ? "÷" : "×"}`
+            + formatScaleFactor(scaleFactor),
+        );
+      } catch (error) {
+        const prefix = saved ? "倍率已保存，但重新读取失败：" : "";
+        setMessage(`${prefix}${(error as Error).message}`, true);
+      } finally {
+        apply.disabled = false;
+      }
+    });
+
+    fields.append(operator, factor, apply);
+    row.append(heading, fields);
+    scaleControls.appendChild(row);
   });
 };
 
@@ -308,7 +457,7 @@ const renderMeasurements = (series: SeriesSnapshot[]): void => {
     const dot = document.createElement("i");
     dot.style.backgroundColor = COLORS[index % COLORS.length];
     const label = document.createElement("span");
-    label.textContent = channel.array_name;
+    label.textContent = sourceDisplayName(channel);
     name.append(dot, label);
     row.appendChild(name);
 
@@ -380,7 +529,7 @@ const createPlot = (sources: SourceStatus[]): void => {
       series: [
         {},
         ...sources.map((source, index) => ({
-          label: source.array_name,
+          label: sourceDisplayName(source),
           stroke: COLORS[index % COLORS.length],
           width: 3,
           points: { show: false },
@@ -586,7 +735,7 @@ const updateFftChannelOptions = (snapshot: Snapshot): void => {
   snapshot.series.forEach((series, index) => {
     const option = document.createElement("option");
     option.value = String(index);
-    option.textContent = `${index + 1} · ${series.array_name}`;
+    option.textContent = `${index + 1} · ${sourceDisplayName(series)}`;
     fftChannel.appendChild(option);
   });
   fftChannel.value = String(channelIndex);
@@ -637,7 +786,7 @@ const runFftAnalysis = (): void => {
       ? windowLabel
       : `${windowLabel} → ${appliedWindowLabel}`;
   fftDetail.textContent =
-    `${channel.array_name} · ${displayedWindow} · `
+    `${sourceDisplayName(channel)} · ${displayedWindow} · `
       + `${activeFftConfig.amplitude === "rms" ? "RMS" : "Amp"}`;
 
   const warnings: string[] = [];
@@ -678,6 +827,26 @@ const scheduleFftAnalysis = (): void => {
     fftAnalysisTimer = undefined;
     runFftAnalysis();
   }, 200);
+};
+
+const clearSnapshotView = (sources: SourceStatus[]): void => {
+  latestSnapshot = null;
+  pointTooltip.hidden = true;
+  plot?.setData([[], ...sources.map(() => [])]);
+  measurementRows.replaceChildren();
+  byId("sequence").textContent = "Snapshot —";
+  byId("read-duration").textContent = "Read — ms";
+  byId("capture-time").textContent = "—";
+  const badge = byId("trigger-badge");
+  badge.textContent = "等待刷新";
+  badge.classList.remove("manual");
+  fftAnalysis = null;
+  fftPlot?.setData([[], []]);
+  fftSnapshot.textContent = "等待数据";
+  fftRange.textContent = "H0 · DC";
+  fftDetail.textContent = "等待波形快照";
+  fftMessage.textContent = "";
+  updateExportAvailability();
 };
 
 fftAnalyze.addEventListener("click", async () => {
@@ -730,7 +899,7 @@ const updateStatus = (status: ViewerStatus): void => {
   intervalInput.value = String(status.interval_ms);
 
   byId("array-name-title").textContent =
-    sources.length === 1 ? sources[0].array_name : "Array Waveforms";
+    sources.length === 1 ? sourceDisplayName(sources[0]) : "Array Waveforms";
   const maxCount = Math.max(...sources.map((source) => source.count));
   byId("array-meta").textContent =
     `${sources.length} curves · max ${maxCount} points`;
@@ -744,6 +913,7 @@ const updateStatus = (status: ViewerStatus): void => {
   byId("uvsock-port").textContent = String(status.port);
 
   if (seriesSignature(sources) !== plottedSignature) createPlot(sources);
+  renderScaleControls(sources);
   updateExportAvailability();
 };
 
@@ -801,7 +971,7 @@ const loadInitialState = async (): Promise<void> => {
   applyFftConfigToControls(activeFftConfig);
   updateStatus(status);
   mapFileNote.textContent =
-    `配置自动保存 · 留空的数组地址将从 MAP 解析 · `
+    `保存不读取 · 留空的数组地址将从 MAP 解析 · `
       + `最多 ${options.max_sources} 条曲线`;
   mapFileNote.title = `配置文件：${options.settings_file}`;
   try {
@@ -905,7 +1075,8 @@ exportButton.addEventListener("click", () => {
     const option = document.createElement("option");
     option.value = String(index);
     option.textContent =
-      `${index + 1} · ${series.array_name} (${series.values.length} points)`;
+      `${index + 1} · ${sourceDisplayName(series)} `
+        + `(${series.values.length} points)`;
     exportChannel.appendChild(option);
   });
   const savedChannel = Math.min(
@@ -1011,6 +1182,11 @@ const addSourceRow = (
   );
   field<HTMLSelectElement>("dtype").value =
     configured?.dtype ?? source?.dtype ?? "float32";
+  row.dataset.scaleOperator =
+    configured?.scale_operator ?? source?.scale_operator ?? "multiply";
+  row.dataset.scaleFactor = String(
+    configured?.scale_factor ?? source?.scale_factor ?? 1,
+  );
   const address = field<HTMLInputElement>("address");
   address.value =
     configured?.address === null || configured?.address === undefined
@@ -1055,13 +1231,56 @@ const collectSourceRows = (): SourceInput[] =>
         count: Number(value("count")),
         dtype: value("dtype"),
         address: address || null,
+        scale_operator:
+          (row.dataset.scaleOperator as ScaleOperator | undefined)
+            ?? "multiply",
+        scale_factor: Number(row.dataset.scaleFactor ?? 1),
       };
     },
   );
 
+const draftSourcesPayload = (): SourcesPayload => ({
+  map_file: mapFileInput.value.trim(),
+  keil_path: keilPathInput.value.trim(),
+  sources: collectSourceRows(),
+});
+
+const formatSourceTestResult = (result: SourceTestResponse): string => {
+  const target = result.target_state === "running" ? "Running" : "Stopped";
+  const summary =
+    `测试通过：${result.sources.length} 条曲线，`
+      + `${result.total_bytes} 字节，目标 ${target}，`
+      + `${result.duration_ms.toFixed(1)} ms`;
+  return result.warnings.length > 0
+    ? `${summary}；清理警告：${result.warnings.join("；")}`
+    : summary;
+};
+
+const runSourceTest = async (
+  config: SourcesPayload,
+  button: HTMLButtonElement,
+  report: (message: string, isError: boolean) => void,
+): Promise<void> => {
+  button.disabled = true;
+  report("正在验证 MAP、UVSC DLL 并读取数组…", false);
+  try {
+    const result = await requestJson<SourceTestResponse>("/api/sources/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    report(formatSourceTestResult(result), false);
+  } catch (error) {
+    report((error as Error).message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
+
 const closeSourceDialog = (): void => {
   sourceDialog.close();
   sourceError.textContent = "";
+  sourceError.classList.remove("success");
 };
 
 sourceConfigButton.addEventListener("click", () => {
@@ -1077,6 +1296,7 @@ sourceConfigButton.addEventListener("click", () => {
     addSourceRow();
   }
   sourceError.textContent = "";
+  sourceError.classList.remove("success");
   sourceDialog.showModal();
 });
 addSourceButton.addEventListener("click", () => addSourceRow());
@@ -1086,43 +1306,69 @@ sourceDialog.addEventListener("click", (event) => {
   if (event.target === sourceDialog) closeSourceDialog();
 });
 
+sourceTestButton.addEventListener("click", async () => {
+  if (!sourceOptions) {
+    setMessage("数据源配置尚未加载", true);
+    return;
+  }
+  await runSourceTest(
+    {
+      map_file: sourceOptions.map_file,
+      keil_path: sourceOptions.keil_path,
+      sources: sourceOptions.sources,
+    },
+    sourceTestButton,
+    (message, isError) => setMessage(message, isError),
+  );
+});
+
+sourceTest.addEventListener("click", async () => {
+  if (!sourceForm.reportValidity()) return;
+  sourceSave.disabled = true;
+  await runSourceTest(
+    draftSourcesPayload(),
+    sourceTest,
+    (message, isError) => {
+      sourceError.textContent = message;
+      sourceError.classList.toggle("success", !isError);
+    },
+  );
+  sourceSave.disabled = false;
+});
+
 sourceForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   sourceSave.disabled = true;
+  sourceTest.disabled = true;
   sourceError.textContent = "";
+  sourceError.classList.remove("success");
   try {
-    const submittedSources = collectSourceRows();
+    const payload = draftSourcesPayload();
     const response = await requestJson<SourcesUpdateResponse>("/api/sources", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        map_file: mapFileInput.value.trim(),
-        keil_path: keilPathInput.value.trim(),
-        sources: submittedSources,
-      }),
+      body: JSON.stringify(payload),
     });
     if (sourceOptions) {
       sourceOptions.map_file = response.map_file;
       sourceOptions.keil_path = response.keil_path;
-      sourceOptions.sources = submittedSources;
+      sourceOptions.sources = payload.sources;
     }
     updateStatus(response.status);
-    const snapshot = await requestJson<Snapshot>("/api/refresh", {
-      method: "POST",
-    });
-    updateSnapshot(snapshot);
+    clearSnapshotView(normalizedSources(response.status));
     const mapCount = response.resolutions.filter(
       (item) => item.resolved_from_map,
     ).length;
     setMessage(
-      `已保存 ${snapshot.series.length} 条曲线，`
-        + `${mapCount} 条由 MAP 解析`,
+      `已保存 ${payload.sources.length} 条曲线，`
+        + `${mapCount} 条由 MAP 解析；可测试或立即刷新`,
     );
     closeSourceDialog();
   } catch (error) {
     sourceError.textContent = (error as Error).message;
   } finally {
     sourceSave.disabled = false;
+    sourceTest.disabled = false;
   }
 });
 

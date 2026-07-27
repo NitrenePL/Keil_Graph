@@ -9,11 +9,18 @@ import struct
 import threading
 import time
 from concurrent.futures import Future
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from backend.source_config import ArraySource, DATA_TYPES
+from backend.source_config import (
+    MAX_SCALE_FACTOR,
+    MIN_SCALE_FACTOR,
+    SCALE_OPERATORS,
+    ArraySource,
+    DATA_TYPES,
+)
 from read_mylogger_once import DEFAULT_ADDRESS, DEFAULT_COUNT
 from uvsc_smoke_test import UvscClient, UvscError, resolve_dll
 
@@ -56,6 +63,13 @@ class UvscArrayService:
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._manual_requests: queue.Queue[Future[dict[str, Any]]] = queue.Queue()
+        self._test_requests: queue.Queue[
+            tuple[
+                tuple[ArraySource, ...],
+                Path,
+                Future[dict[str, Any]],
+            ]
+        ] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._listener: EventListener | None = None
         self._client: UvscClient | None = None
@@ -90,6 +104,7 @@ class UvscArrayService:
         if self._thread is not None:
             self._thread.join(timeout)
         self._fail_pending_requests(UvscError("UVSC 服务已停止"))
+        self._fail_pending_test_requests(UvscError("UVSC 服务已停止"))
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
@@ -208,11 +223,53 @@ class UvscArrayService:
             )
         )
 
+    def configure_scale(
+        self,
+        channel_index: int,
+        scale_operator: str,
+        scale_factor: float,
+    ) -> dict[str, Any]:
+        with self._lock:
+            if not 0 <= channel_index < len(self._sources):
+                raise ValueError("缩放通道不存在")
+            sources = list(self._sources)
+            sources[channel_index] = replace(
+                sources[channel_index],
+                scale_operator=scale_operator,
+                scale_factor=scale_factor,
+            )
+            source_tuple = tuple(sources)
+            self._validate_sources(source_tuple)
+            self._sources = source_tuple
+            self._latest = None
+            self._last_error = None
+            status = self.get_status()
+        self._wake_event.set()
+        self._emit({"type": "status", "data": status})
+        return status
+
     def refresh_now(self, timeout: float = 10.0) -> dict[str, Any]:
         if self._thread is None or not self._thread.is_alive():
             raise UvscError("UVSC 服务尚未启动")
         future: Future[dict[str, Any]] = Future()
         self._manual_requests.put(future)
+        self._wake_event.set()
+        return future.result(timeout=timeout)
+
+    def test_configuration(
+        self,
+        sources: Iterable[ArraySource],
+        dll_path: Path,
+        timeout: float = 15.0,
+    ) -> dict[str, Any]:
+        if self._thread is None or not self._thread.is_alive():
+            raise UvscError("UVSC 服务尚未启动")
+        source_tuple = tuple(sources)
+        self._validate_sources(source_tuple)
+        future: Future[dict[str, Any]] = Future()
+        self._test_requests.put(
+            (source_tuple, dll_path.expanduser().resolve(), future)
+        )
         self._wake_event.set()
         return future.result(timeout=timeout)
 
@@ -241,6 +298,20 @@ class UvscArrayService:
                 raise ValueError(f"{name} 地址超出范围：0x{source.address:X}")
             if source.data_type not in DATA_TYPES:
                 raise ValueError(f"{name} 使用了不支持的数据类型：{source.data_type}")
+            if source.scale_operator not in SCALE_OPERATORS:
+                raise ValueError(
+                    f"{name} 使用了不支持的缩放操作：{source.scale_operator}"
+                )
+            if (
+                not math.isfinite(source.scale_factor)
+                or not MIN_SCALE_FACTOR
+                <= source.scale_factor
+                <= MAX_SCALE_FACTOR
+            ):
+                raise ValueError(
+                    f"{name} 的缩放倍率必须在 "
+                    f"{MIN_SCALE_FACTOR:g}～{MAX_SCALE_FACTOR:g} 之间"
+                )
             if source.count <= 0:
                 raise ValueError(f"{name} 的元素数量必须大于 0")
             byte_count = (
@@ -265,6 +336,10 @@ class UvscArrayService:
                     self._disconnect()
                     retry_at = now
 
+                if self._process_test_requests():
+                    retry_at = time.monotonic()
+
+                now = time.monotonic()
                 if self._client is None and now >= retry_at:
                     try:
                         self._connect()
@@ -350,6 +425,76 @@ class UvscArrayService:
             except Exception as exc:
                 future.set_exception(exc)
 
+    def _process_test_requests(self) -> bool:
+        processed = False
+        while True:
+            try:
+                sources, dll_path, future = self._test_requests.get_nowait()
+            except queue.Empty:
+                return processed
+
+            processed = True
+            self._disconnect()
+            try:
+                future.set_result(
+                    self._test_configuration(sources, dll_path)
+                )
+            except Exception as exc:
+                future.set_exception(exc)
+
+    def _test_configuration(
+        self,
+        sources: tuple[ArraySource, ...],
+        configured_path: Path,
+    ) -> dict[str, Any]:
+        dll_path = resolve_dll(configured_path, self.workspace)
+        client = UvscClient(dll_path)
+        started = time.perf_counter()
+        warnings: list[str] = []
+        try:
+            client.initialize()
+            _handle, connected_port = client.connect(self.port)
+            result, target_status, detail = client.debug_status()
+            if result != 0:
+                raise UvscError(f"无法确认调试状态：{detail}")
+
+            tested_sources: list[dict[str, Any]] = []
+            total_bytes = 0
+            for source in sources:
+                byte_count = (
+                    source.count * DATA_TYPES[source.data_type].byte_size
+                )
+                read_started = time.perf_counter()
+                raw = client.read_memory(source.address, byte_count)
+                total_bytes += len(raw)
+                tested_sources.append(
+                    {
+                        **source.as_status(),
+                        "byte_count": len(raw),
+                        "read_duration_ms": round(
+                            (time.perf_counter() - read_started) * 1000,
+                            3,
+                        ),
+                    }
+                )
+
+            return {
+                "port": connected_port,
+                "target_state": (
+                    "running" if target_status == 1 else "stopped"
+                ),
+                "dll_path": str(dll_path),
+                "total_bytes": total_bytes,
+                "duration_ms": round(
+                    (time.perf_counter() - started) * 1000,
+                    3,
+                ),
+                "sources": tested_sources,
+                "warnings": warnings,
+            }
+        finally:
+            warnings.extend(client.close())
+
     def _capture(self, trigger: str) -> dict[str, Any]:
         if self._client is None:
             raise UvscError("UVSC 未连接")
@@ -367,9 +512,15 @@ class UvscArrayService:
                     source.address,
                     source.count * data_type.byte_size,
                 )
-                values = struct.unpack(
+                raw_values = struct.unpack(
                     f"<{source.count}{data_type.struct_code}",
                     raw,
+                )
+                multiplier = source.scale_multiplier
+                values = (
+                    raw_values
+                    if multiplier == 1.0
+                    else tuple(value * multiplier for value in raw_values)
                 )
                 finite = [value for value in values if math.isfinite(value)]
                 series.append(
@@ -415,6 +566,8 @@ class UvscArrayService:
                 "address": first["address"],
                 "count": first["count"],
                 "dtype": first["dtype"],
+                "scale_operator": first["scale_operator"],
+                "scale_factor": first["scale_factor"],
                 "values": first["values"],
                 "stats": first["stats"],
             }
@@ -436,6 +589,15 @@ class UvscArrayService:
         while True:
             try:
                 future = self._manual_requests.get_nowait()
+            except queue.Empty:
+                return
+            if not future.done():
+                future.set_exception(exc)
+
+    def _fail_pending_test_requests(self, exc: BaseException) -> None:
+        while True:
+            try:
+                _sources, _dll_path, future = self._test_requests.get_nowait()
             except queue.Empty:
                 return
             if not future.done():
