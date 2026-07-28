@@ -118,6 +118,15 @@ interface SourcesPayload {
   sources: SourceInput[];
 }
 
+interface SerialPortOption {
+  device: string;
+  description: string;
+}
+
+interface SerialPortsResponse {
+  ports: SerialPortOption[];
+}
+
 interface SourceInput {
   array_name: string;
   count: number;
@@ -178,7 +187,7 @@ const mapFileNote = byId<HTMLParagraphElement>("map-file-note");
 const sourceListDescription = byId<HTMLElement>("source-list-description");
 const dataSourceInput = byId<HTMLSelectElement>("data-source");
 const serialFields = byId<HTMLDivElement>("serial-fields");
-const serialPortInput = byId<HTMLInputElement>("serial-port");
+const serialPortInput = byId<HTMLSelectElement>("serial-port");
 const serialBaudrateInput = byId<HTMLInputElement>("serial-baudrate");
 const mapFileInput = byId<HTMLInputElement>("map-file");
 const keilPathInput = byId<HTMLInputElement>("keil-path");
@@ -1437,6 +1446,50 @@ const updateSourceNumbers = (): void => {
 const selectedDataSource = (): DataSourceKind =>
   dataSourceInput.value === "serial" ? "serial" : "uvsc";
 
+const renderSerialPortOptions = (
+  ports: SerialPortOption[],
+  selectedPort: string,
+): void => {
+  serialPortInput.replaceChildren();
+
+  ports.forEach((port) => {
+    const option = document.createElement("option");
+    option.value = port.device;
+    option.textContent =
+      port.description && port.description !== "n/a"
+        ? `${port.device} — ${port.description}`
+        : port.device;
+    serialPortInput.appendChild(option);
+  });
+
+  if (
+    selectedPort
+    && !ports.some((port) => port.device === selectedPort)
+  ) {
+    const saved = document.createElement("option");
+    saved.value = selectedPort;
+    saved.textContent = `${selectedPort}（已保存，当前未检测到）`;
+    serialPortInput.prepend(saved);
+  }
+
+  if (serialPortInput.options.length === 0) {
+    const unavailable = document.createElement("option");
+    unavailable.value = "";
+    unavailable.textContent = "未检测到可用串口";
+    serialPortInput.appendChild(unavailable);
+  }
+
+  serialPortInput.value = selectedPort;
+};
+
+const refreshSerialPortOptions = async (): Promise<void> => {
+  const selectedPort =
+    serialPortInput.value || sourceOptions?.serial_port || "";
+  const response =
+    await requestJson<SerialPortsResponse>("/api/serial/ports");
+  renderSerialPortOptions(response.ports, selectedPort);
+};
+
 const updateDataSourceFields = (): void => {
   const dataSource = selectedDataSource();
   const isSerial = dataSource === "serial";
@@ -1649,7 +1702,7 @@ sourceConfigButton.addEventListener("click", () => {
   dataSourceInput.value = sourceOptions?.data_source ?? "uvsc";
   mapFileInput.value = sourceOptions?.map_file ?? "";
   keilPathInput.value = sourceOptions?.keil_path ?? "";
-  serialPortInput.value = sourceOptions?.serial_port ?? "COM31";
+  renderSerialPortOptions([], sourceOptions?.serial_port ?? "COM31");
   serialBaudrateInput.value = String(sourceOptions?.serial_baudrate ?? 115200);
   if (latestStatus) {
     renderSourceRows(
@@ -1664,6 +1717,10 @@ sourceConfigButton.addEventListener("click", () => {
   sourceError.textContent = "";
   sourceError.classList.remove("success");
   sourceDialog.showModal();
+  void refreshSerialPortOptions().catch((error: unknown) => {
+    if (selectedDataSource() !== "serial") return;
+    sourceError.textContent = `读取串口列表失败：${(error as Error).message}`;
+  });
 });
 dataSourceInput.addEventListener("change", updateDataSourceFields);
 addSourceButton.addEventListener("click", () => addSourceRow());

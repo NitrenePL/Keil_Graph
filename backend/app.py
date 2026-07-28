@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from serial.tools import list_ports
 
 from backend.array_service import (
     MAX_INTERVAL_MS,
@@ -484,6 +485,20 @@ async def get_source_options() -> dict[str, Any]:
         "export_frequency_hz": current_export_frequency_hz,
         "fft_config": current_fft_config.model_dump(mode="json"),
         "max_sources": MAX_SOURCES,
+    }
+
+
+@app.get("/api/serial/ports")
+async def get_serial_ports() -> dict[str, list[dict[str, str]]]:
+    ports = await asyncio.to_thread(list_ports.comports)
+    return {
+        "ports": [
+            {
+                "device": port.device,
+                "description": port.description,
+            }
+            for port in sorted(ports, key=lambda item: item.device.casefold())
+        ]
     }
 
 

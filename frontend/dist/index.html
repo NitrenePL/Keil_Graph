@@ -8,7 +8,7 @@
       content="通过 Keil UVSC 实时查看 STM32 数组波形"
     />
     <title>Keil Array Viewer</title>
-    <script type="module" crossorigin src="/assets/index-DtaBBnDF.js"></script>
+    <script type="module" crossorigin src="/assets/index-BW7IrS2h.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-RP9gtRly.css">
   </head>
   <body>
@@ -280,7 +280,10 @@
             <div id="serial-fields" class="field-grid" hidden>
               <label>
                 接收串口
-                <input id="serial-port" type="text" maxlength="256" placeholder="COM31" autocomplete="off" />
+                <select id="serial-port" required>
+                  <option value="">正在检测串口…</option>
+                </select>
+                <small>打开配置时自动检测</small>
               </label>
               <label>
                 波特率
